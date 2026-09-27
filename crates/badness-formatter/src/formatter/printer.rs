@@ -884,7 +884,22 @@ impl Printer {
         // atom, so `parts[2]` exists here.
         let pair_fits = !broken
             && match (w0, self.flat_width(sep)) {
-                (Some(a), Some(s)) => self.fill_atom_mode(col + a + s, &parts[2], hug).is_some(),
+                (Some(a), Some(s)) => {
+                    let next_col = col + a + s;
+                    match self.fill_atom_mode(next_col, &parts[2], hug) {
+                        // Decide the final gap while it can still break: the
+                        // last atom cannot move an already-emitted separator
+                        // when a glued delimiter or argument overflows later.
+                        // Hugging fills keep their local prefix proof even
+                        // when it happens to cover the whole atom: reparsing a
+                        // wrapped fallback can move its body outside the fill.
+                        Some(Mode::Flat) if parts.len() == 3 && !hug => self
+                            .flat_width(&parts[2])
+                            .is_some_and(|width| self.rest_fits(next_col + width, stack)),
+                        Some(_) => true,
+                        None => false,
+                    }
+                }
                 _ => false,
             };
         // Once any atom breaks, a sticky fill stays broken for its remainder, so
@@ -1779,6 +1794,21 @@ mod tests {
         let printer = Printer::new(FormatStyle::default());
         let ir = Ir::fill([Ir::text("a"), Ir::text("b"), Ir::text("c")]);
         assert_eq!(printer.print(&ir), "a b c");
+    }
+
+    #[test]
+    fn fill_last_separator_counts_the_following_suffix() {
+        let ir = Ir::concat([
+            Ir::fill([Ir::text("aa"), Ir::text("bbb")]),
+            Ir::text("xxxxx"),
+        ]);
+        for (line_width, expected) in [(10, "aa\nbbbxxxxx"), (11, "aa bbbxxxxx")] {
+            let printer = Printer::new(FormatStyle {
+                line_width,
+                ..FormatStyle::default()
+            });
+            assert_eq!(printer.print(&ir), expected);
+        }
     }
 
     #[test]

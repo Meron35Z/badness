@@ -38,7 +38,7 @@ fixture tables:
 | Area | Representative fixtures |
 | --- | --- |
 | Environment frames and bodies | `environment_empty_body`, `environment_special_character_names`, `begin_tail_is_body`, `environment_leading_body_command`, `environment_inline_prose_boundaries`, `environment_adjacent_siblings`, `environment_in_command_argument`, `environment_in_scoped_group`, `opaque_group_glued_environment` |
-| Declared environment arguments | `environment_argument_blank_lines`, `environment_argument_comment_barrier`, `environment_argument_comment_slots`, `environment_argument_delimiter_comments`, `environment_argument_escaped_delimiters`, `environment_omitted_optional_slots` |
+| Declared environment arguments | `environment_argument_blank_lines`, `environment_argument_comment_barrier`, `environment_argument_comment_slots`, `environment_argument_delimiter_comments`, `environment_argument_escaped_delimiters`, `environment_omitted_optional_slots`, `environment_textual_optional_edges` |
 | Protected bodies | `filecontents_protected_body` |
 | Sectioning | `sectioning_starts_own_line`, `sectioning_blank_line_and_comment` |
 | Keyval groups | `keyval_group_splits_entries`, `keyval_group_declines_on_comment`, `environment_keyval_group_splits_entries` |

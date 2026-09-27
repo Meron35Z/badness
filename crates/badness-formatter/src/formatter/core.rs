@@ -7632,16 +7632,9 @@ fn lower_bracketed(
     // content, a nested node) means the opener was glued. This path is never
     // reached inside an expl3 region (routed to `lower_expl_group` earlier),
     // where source whitespace is catcode-9 and the synthesized break is sound.
-    // Two things lift the guard. A `[…]` always did (`collapse_arg_group`, issue
-    // #47): it freely swaps its interior newlines for spaces, so the Allman break
-    // after `[` is by design. And a *proven keyval* body does, whatever its
-    // delimiter — `ContentKind::Keyval` asserts the processor strips spaces around
-    // entries, which is the same license under a different name. Reading `open`
-    // alone was the proxy for that second one, sound only while keyval lived on
-    // brackets; left in place it glued a `\pgfkeys{a=1,` opener while its closer
-    // still took its own line, an asymmetry nothing justified.
-    let open_glued = open == SyntaxKind::L_BRACE
-        && !keyval
+    // Only a proven keyval body lifts the guard: its processor strips spaces
+    // around entries. Textual optionals observe edge spaces just like braces.
+    let open_glued = !keyval
         && body_elements
             .first()
             .and_then(SyntaxElement::as_token)
@@ -8117,20 +8110,17 @@ fn lower_column_spec_group(node: &SyntaxNode, cx: LowerCtx<'_>) -> Option<Ir> {
     ])))
 }
 
-/// Lower a delimited argument group as a comma-segmented Wadler group, or `None` to
+/// Lower a delimited argument group as a comma-separated layout, or `None` to
 /// leave it on the generic inline path.
 ///
-/// The body is a plain Wadler group over its top-level comma-separated entries: flat
-/// when it fits the width, one key per line when it does not. An unproven textual
-/// optional retains the collapsed gap, so `\foo[a=1,\nb=2]` formats as
-/// `\foo[a=1, b=2]` (issue #47). A proven keyval instead canonicalizes every flat
-/// separator without a space (`a=1,b=2`); either way, a source line break inside
-/// `[…]` is incidental. An over-long bracket *expands* instead of silently
-/// overflowing, and the choice no longer depends on where the author broke the line
-/// (`spans_multiple_lines` was the unsafe lone-newline predicate; see the
-/// trivia-invariant-layout section of `formatter.md`). The fit decision is this
-/// group's rest-aware measurement, so trailing same-line content (`]{c}`) counts
-/// toward it.
+/// A proven keyval body uses a Wadler group over its top-level comma-separated
+/// entries: flat when it fits, one key per line otherwise. A textual optional
+/// instead fills each line at existing comma-space boundaries, keeping glued
+/// delimiters attached to their content. Its collapsed gaps retain spaces, so
+/// `\foo[a=1,\nb=2]` formats as `\foo[a=1, b=2]`. A proven keyval canonicalizes
+/// every flat separator without a space (`a=1,b=2`). Both layouts measure width
+/// rather than authored line breaks, and include trailing same-line content
+/// (`]{c}`) in their fit decisions.
 ///
 /// `keyval` reports that the signature DB proved this argument a `key=value` list
 /// (see [`ContentKind::Keyval`]), which additionally licenses splitting a comma the
@@ -8210,12 +8200,29 @@ fn lower_segmented_group(
     // delimiters take their own lines, or the first key lands at indent + 1.
     let lead = peel_padding(&mut parts, Edge::Leading);
     let trail = peel_padding(&mut parts, Edge::Trailing);
-    let body = Ir::concat(parts);
     if splits == 0 {
         // Nothing to break at: emit the collapsed atom and let it overflow. A
         // breakable group here would push `[!htb]` onto three lines to no gain.
-        return Some(Ir::concat([open, lead, body, trail, close]));
+        return Some(Ir::concat([open, lead, Ir::concat(parts), trail, close]));
     }
+    if !keyval {
+        // Only a single-space edge can become a newline and reconstruct the
+        // same normalized gap. Glued and wider edges retain their exact spelling.
+        let edge = |padding: Ir| match &padding {
+            Ir::Verbatim { text, .. } if text.as_ref() == " " => Ir::line(),
+            _ => padding,
+        };
+        let atoms = parts
+            .split(is_segment_separator)
+            .map(|entry| Ir::concat(entry.iter().cloned()));
+        return Some(Ir::group(Ir::concat([
+            open,
+            Ir::indent(Ir::concat([edge(lead), Ir::fill(atoms)])),
+            edge(trail),
+            close,
+        ])));
+    }
+    let body = Ir::concat(parts);
     Some(Ir::group(Ir::concat([
         open,
         Ir::indent(Ir::concat([

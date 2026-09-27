@@ -579,6 +579,9 @@ const FIXTURES: &[(&str, WrapMode, usize)] = &[
     // Long declared arguments retain paragraph breaks, including a trailing one
     // whose presence keeps optional block lowering at a fixed point.
     ("environment_argument_blank_lines", WrapMode::Reflow, 80),
+    // Textual optionals fill at existing comma-space gaps without introducing
+    // spaces beside glued delimiters. Comments retain their authored binding.
+    ("environment_textual_optional_edges", WrapMode::Reflow, 80),
     // Locally defined delimiter aliases inherit the target environment's list
     // and math-grid layout, nest structurally, and stay ordinary commands when
     // no closer proves the pair.
@@ -918,14 +921,12 @@ const FIXTURES: &[(&str, WrapMode, usize)] = &[
     ("reflow_ref_flows", WrapMode::Reflow, 80),
     // Optional-argument layout (issue #47): a multi-line `[…]` collapses to one
     // line when it fits the width (`\foo[a=1,\nb=2]` -> `\foo[a=1, b=2]`, the
-    // interior newlines becoming spaces) and keeps the indented block form when
-    // it does not.
+    // interior newlines becoming spaces) and fills indented continuation lines
+    // when it does not.
     ("optional_collapse_fits", WrapMode::Reflow, 30),
-    // A `[…]` is a group over its top-level entries: flat when it fits, one key
-    // per line when it does not. The three `\wide` calls carry *identical* option
-    // content and differ only in where the author broke the line, so they must
-    // format identically — the layout no longer reads `spans_multiple_lines`
-    // (see the trivia-invariant-layout section of `formatter.md`).
+    // Textual optionals fill to width at existing top-level comma-space gaps.
+    // The three `\wide` calls carry identical content and differ only in where
+    // the author broke the line, so they must format identically.
     ("optional_expands_to_width", WrapMode::Reflow, 60),
     // Splitting a comma the author *glued* needs the signature DB to prove the
     // argument keyval (`ContentKind::Keyval`; `axis` via the CWL `%keyvals` mark).
@@ -2075,6 +2076,85 @@ fn formatter_fixtures_match_expected() {
         };
         assert_fixture(name, style);
     }
+}
+
+#[test]
+fn textual_optional_fill_keeps_delimiter_spaces() {
+    let style = FormatStyle {
+        line_width: 30,
+        ..FormatStyle::default()
+    };
+    for (input, expected) in [
+        (
+            "\\unknown[alpha, beta, gamma, delta]{tail}\n",
+            "\\unknown[alpha, beta, gamma,\n  delta]{tail}\n",
+        ),
+        (
+            "\\unknown[alpha,\nbeta, gamma,\ndelta]{tail}\n",
+            "\\unknown[alpha, beta, gamma,\n  delta]{tail}\n",
+        ),
+        (
+            "\\unknown[alpha,% keep\nbeta]{tail}\n",
+            "\\unknown[alpha,% keep\n  beta]{tail}\n",
+        ),
+        (
+            "\\unknown[%\nalpha,%\n]{tail}\n",
+            "\\unknown[%\n  alpha,%\n]{tail}\n",
+        ),
+        ("\\unknown[ ]{tail}\n", "\\unknown[ ]{tail}\n"),
+        (
+            "\\foo[  alpha, beta, gamma, delta  ]{x}\n",
+            "\\foo[  alpha, beta, gamma,\n  delta  ]{x}\n",
+        ),
+    ] {
+        assert_eq!(format_with_style(input, style).unwrap(), expected);
+        assert_format_invariants_with_style(input, style);
+    }
+}
+
+#[test]
+fn textual_optional_fill_accounts_for_following_arguments() {
+    let input = "\\foo[alpha, beta]{abcdefghijkl}\n";
+    let style = FormatStyle {
+        line_width: 25,
+        ..FormatStyle::default()
+    };
+    assert_eq!(
+        format_with_style(input, style).unwrap(),
+        "\\foo[alpha,\n  beta]{abcdefghijkl}\n"
+    );
+    assert_format_invariants_with_style(input, style);
+}
+
+#[test]
+fn textual_environment_optionals_preserve_invariants() {
+    let input = include_str!("fixtures/formatter/environment_textual_optional_edges/input.tex");
+    for line_width in [30, 60, 80, 120] {
+        assert_format_invariants_with_style(
+            input,
+            FormatStyle {
+                line_width,
+                ..FormatStyle::default()
+            },
+        );
+    }
+}
+
+#[test]
+fn fill_suffix_measurement_keeps_expl3_fallbacks_convergent() {
+    let input = concat!(
+        "\\ExplSyntaxOn\n",
+        "\\cs_new:Npn \\demo: { \\ifx\\one\\two \\helper ",
+        "\\example:n { alpha beta alpha beta alpha beta } \\tail \\fi }\n",
+        "\\ExplSyntaxOff\n",
+    );
+    assert_format_invariants_with_style(
+        input,
+        FormatStyle {
+            line_width: 30,
+            ..FormatStyle::default()
+        },
+    );
 }
 
 #[test]

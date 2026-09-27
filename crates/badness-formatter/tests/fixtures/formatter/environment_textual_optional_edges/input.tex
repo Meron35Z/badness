@@ -1,0 +1,45 @@
+\NewDocumentEnvironment{panel}{O{} m}{\textbf{#2} #1}{\par}
+
+\begin{panel}[brief, clear]{Heading}
+Body.
+\end{panel}
+
+\begin{panel}[first description, second description, third description, fourth description]{Heading}
+Body.
+\end{panel}
+
+\begin{panel}[first description,
+second description, third description,
+fourth description]{Heading}
+Body.
+\end{panel}
+
+\begin{quote}
+\begin{panel}[first description, {second, nested description}, third description, fourth description]{Heading}
+First paragraph.
+
+Second paragraph.
+\end{panel}
+\end{quote}
+
+\begin{panel}[first description,% keep this boundary
+second description, third description, fourth description]{Heading}
+Body.
+\end{panel}
+
+\begin{panel}[first-description,second-description,third-description,fourth-description]{Heading}
+Body.
+\end{panel}
+
+\begin{panel}[ first description, second description, third description, fourth description ]{Heading}
+Body.
+\end{panel}
+
+\begin{panel}[%
+first description,
+second description,
+third description,
+fourth description%
+]{Heading}
+Body.
+\end{panel}

@@ -60,8 +60,8 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done
   protecting.
 
 - [ ] **Formatter-owned trailing comma (parked; the last piece of issue #47).**
-  A `[…]` — and, since the segmentation above, a proven-keyval `{…}` — is a
-  width-driven group over its top-level entries, and a
+  A proven-keyval `[…]` or `{…}` is a width-driven group over its top-level
+  entries, and a
   `ContentKind::Keyval` argument may also break at a glued comma
   (`docs/src/development/architecture.md` § *Optional arguments, tables, and math spacing*). What is left of the old parked
   item is the Black-style trailing comma: for a proven-keyval argument, add the

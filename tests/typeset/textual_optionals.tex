@@ -1,0 +1,31 @@
+\documentclass{article}
+\newsavebox{\optionalbox}
+% Printing the measured width exposes edge spaces that text extraction can hide.
+\NewDocumentEnvironment{panel}{O{} m}{\sbox{\optionalbox}{#1}\noindent#2: \the\wd\optionalbox\quad[#1]\par}{\par}
+\begin{document}
+\begin{panel}[first description, second description, third description, fourth description]{Plain}
+Body.
+\end{panel}
+
+\begin{panel}[ first description, second description, third description, fourth description ]{Padded}
+Body.
+\end{panel}
+
+\begin{panel}[first description,% keep this boundary
+second description, third description, fourth description]{Comment}
+Body.
+\end{panel}
+
+\begin{panel}[first description, {second, nested description}, third description, fourth description]{Nested}
+Body.
+\end{panel}
+
+\begin{panel}[%
+first description,
+second description,
+third description,
+fourth description%
+]{Authored}
+Body.
+\end{panel}
+\end{document}

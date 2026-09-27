@@ -837,9 +837,15 @@ lines around macrocode remain intact.
 
 ### Optional arguments, tables, and math spacing
 
-An optional argument can use a grouped layout over its top-level comma-separated
-entries: flat when it fits, one entry per line otherwise. Width selects the
-form; the number of keys or a trailing comma does not force expansion.
+Textual optional arguments fill each line at existing top-level comma-space
+boundaries, with indented continuations. Delimiters stay attached wherever the
+source has no intervening space; an existing single-space edge may become a
+newline. This preserves the argument's leading and trailing space tokens.
+Comments retain their binding, including authored `%` markers beside delimiters.
+
+A proven key-value argument instead uses a grouped layout: flat when it fits,
+one entry per line otherwise. Width selects the form; the number of keys or a
+trailing comma does not force expansion.
 
 A comma followed by authored whitespace supplies a break opportunity. Breaking
 after a glued comma introduces a TeX space token, so it requires a signature
