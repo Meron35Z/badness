@@ -4877,7 +4877,9 @@ fn split_environment(node: &SyntaxNode, cx: LowerCtx<'_>) -> EnvParts {
     }
     let lifted = leading_inline_comment(&body);
     if let Some(comment) = &lifted {
-        begin = Ir::concat([begin, Ir::verbatim(comment.text())]);
+        // Environment layout already ends the header line. A trailing comment
+        // must not consume its width and split otherwise fitting arguments.
+        begin = Ir::concat([begin, Ir::zero_width(comment.text())]);
     }
     let body_header_token = picture_header_token(node, &body);
     if let Some(token) = &body_header_token {

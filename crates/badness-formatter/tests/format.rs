@@ -2127,6 +2127,21 @@ fn textual_optional_fill_accounts_for_following_arguments() {
 }
 
 #[test]
+fn environment_header_comment_does_not_force_argument_wrap() {
+    let header = "\\begin{sample}{first second}";
+    let style = FormatStyle {
+        line_width: header.len(),
+        ..FormatStyle::default()
+    };
+    for comment in ["%", "% A comment longer than the header itself."] {
+        let input = format!("{header}{comment}\nBody.\n\\end{{sample}}\n");
+        let expected = format!("{header}{comment}\n  Body.\n\\end{{sample}}\n");
+        assert_eq!(format_with_style(&input, style).unwrap(), expected);
+        assert_format_invariants_with_style(&input, style);
+    }
+}
+
+#[test]
 fn textual_environment_optionals_preserve_invariants() {
     let input = include_str!("fixtures/formatter/environment_textual_optional_edges/input.tex");
     for line_width in [30, 60, 80, 120] {
