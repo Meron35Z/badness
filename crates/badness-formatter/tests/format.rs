@@ -2142,6 +2142,49 @@ fn environment_header_comment_does_not_force_argument_wrap() {
 }
 
 #[test]
+fn environment_header_keeps_opaque_values_together() {
+    let style = FormatStyle {
+        line_width: 70,
+        ..FormatStyle::default()
+    };
+    for value in ["section in head/foot", "section in\nhead/foot"] {
+        let input = format!(
+            "\\begin{{beamercolorbox}}[wd=.5\\paperwidth,ht=\\@tempdimb]{{{value}}}%\nBody.\n\\end{{beamercolorbox}}\n"
+        );
+        let expected = concat!(
+            "\\begin{beamercolorbox}[\n",
+            "    wd=.5\\paperwidth,\n",
+            "    ht=\\@tempdimb\n",
+            "  ]{section in head/foot}%\n",
+            "  Body.\n",
+            "\\end{beamercolorbox}\n",
+        );
+        assert_eq!(format_with_style(&input, style).unwrap(), expected);
+        assert_format_invariants_with_style(&input, style);
+    }
+}
+
+#[test]
+fn environment_header_keeps_declared_values_together_after_comments() {
+    let declaration = "\\NewDocumentEnvironment{sample}{m m}{start}{end}\n\n";
+    let style = FormatStyle {
+        line_width: 25,
+        ..FormatStyle::default()
+    };
+    for gap in ["", "% keep\n"] {
+        let input = format!(
+            "{declaration}\\begin{{sample}}{{first}}{gap}{{second argument value}}\nBody.\n\\end{{sample}}\n"
+        );
+        let formatted = format_with_style(&input, style).unwrap();
+        assert!(formatted.contains("{second argument value}"), "{formatted}");
+        if !gap.is_empty() {
+            assert!(formatted.contains("{first}% keep\n  {second argument value}"));
+        }
+        assert_format_invariants_with_style(&input, style);
+    }
+}
+
+#[test]
 fn textual_environment_optionals_preserve_invariants() {
     let input = include_str!("fixtures/formatter/environment_textual_optional_edges/input.tex");
     for line_width in [30, 60, 80, 120] {

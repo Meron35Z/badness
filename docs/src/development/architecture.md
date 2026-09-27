@@ -729,6 +729,11 @@ spelling is the single space that newline reproduces. Interior blank lines,
 comments, embedded newlines, and forced child breaks select a block form; edge
 blank lines cannot select it because that form trims them away.
 
+Signature-matched opaque braced environment arguments keep their top-level words
+together. A value such as `{section in head/foot}` should not split at spaces to
+keep an earlier option list flat. Lone source newlines normalize to spaces;
+comments, paragraph breaks, and nested blocks retain their structural layout.
+
 A narrow exception preserves a newline after `\\` in a structurally plain,
 command-only text group. Its block framing and row breaks recur on the next
 pass, giving the rule a fixed point. Macro-like groups and virtual `.dtx`

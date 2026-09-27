@@ -32,8 +32,10 @@ Under reflow, textual optional arguments wrap at existing top-level comma-space
 boundaries and fill each line to the configured width. Continuation lines are
 indented, and brackets remain attached wherever adding a space would change the
 argument. Known key-value arguments instead expand to one entry per line when
-they do not fit. Existing comments retain their binding; the formatter does not
-insert `%` markers to create new break opportunities.
+they do not fit. Opaque braced environment arguments keep values such as
+`{section in head/foot}` together instead of wrapping their words. Existing
+comments retain their binding; the formatter does not insert `%` markers to
+create new break opportunities.
 
 ## Turning the formatter off
 

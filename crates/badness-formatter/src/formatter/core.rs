@@ -5677,8 +5677,8 @@ struct BeginParts {
 /// `{…}` for tabularray's inner specification. The argument is nested one step
 /// beneath the environment header, so a multiline argument's closing delimiter
 /// aligns with the surrounding environment body and its content sits one level
-/// deeper. Its first line stays attached to `\begin{…}`, and every other content
-/// kind lowers exactly as the generic path would.
+/// deeper. Its first line stays attached to `\begin{…}`. Opaque braced values
+/// keep their top-level words together instead of treating them as prose.
 fn lower_begin(begin: &SyntaxNode, cx: LowerCtx<'_>) -> BeginParts {
     let sig = cx.signatures.environment_at(begin);
     let mut has_comment = false;
@@ -5807,7 +5807,9 @@ fn lower_begin(begin: &SyntaxNode, cx: LowerCtx<'_>) -> BeginParts {
                 } else {
                     None
                 };
-                let argument = segmented.flatten().unwrap_or_else(|| lower_node(child, cx));
+                let argument = segmented.flatten().unwrap_or_else(|| {
+                    lower_header_argument(child, spec.map(|spec| spec.content), cx)
+                });
                 head.push(if spec.is_some() {
                     Ir::indent(argument)
                 } else {
@@ -5842,6 +5844,25 @@ fn attached_arg_kind(element: &SyntaxElement) -> Option<ArgKind> {
     }
 }
 
+/// A declared opaque header value is an argument unit, not a prose body. Its
+/// spaces must not compete with earlier option-list separators for a width
+/// break. Comments, paragraphs, and nested blocks retain their own layout.
+fn lower_header_argument(node: &SyntaxNode, content: Option<ContentKind>, cx: LowerCtx<'_>) -> Ir {
+    if content == Some(ContentKind::Opaque)
+        && node.kind() == SyntaxKind::GROUP
+        && matches!(cx.wrap, WrapMode::Reflow)
+        && !cx.suppressed(node.text_range())
+        && !cx.preserve_dtx_nested_layout
+        && !contains_doc_margin(node, cx)
+        && !doc_margin_opens_line(node, cx)
+        && let Some(argument) =
+            collapse_arg_group(node, SyntaxKind::L_BRACE, SyntaxKind::R_BRACE, cx)
+    {
+        return argument;
+    }
+    lower_node(node, cx)
+}
+
 /// Lower a commented header slice after removing collapsible gaps before declared
 /// arguments, as the ordinary [`lower_begin`] path does. A gap after a comment is
 /// never removed because the comment consumes the rest of its line; suppressed
@@ -5851,7 +5872,7 @@ fn attached_arg_kind(element: &SyntaxElement) -> Option<ArgKind> {
 /// same header-relative nesting as the ordinary [`lower_begin`] path.
 fn lower_commented_header_stream(
     elements: &[SyntaxElement],
-    declared: &[bool],
+    declared: &[Option<ContentKind>],
     mut previous_was_comment: bool,
     cx: LowerCtx<'_>,
 ) -> Ir {
@@ -5882,7 +5903,7 @@ fn lower_commented_header_stream(
         ) {
             i += 1;
         }
-        let followed_by_declared = declared.get(i).copied().unwrap_or(false);
+        let followed_by_declared = declared.get(i).is_some_and(Option::is_some);
         let suppressed = elements[start..i].iter().any(|element| {
             element
                 .as_token()
@@ -5901,8 +5922,8 @@ fn lower_commented_header_stream(
 
     let mut lowered = Vec::new();
     let mut generic = Vec::new();
-    for (element, is_declared) in filtered {
-        if !is_declared {
+    for (element, content) in filtered {
+        if content.is_none() {
             generic.push(element);
             continue;
         }
@@ -5911,7 +5932,7 @@ fn lower_commented_header_stream(
         let node = element
             .into_node()
             .expect("declared environment argument must be a syntax node");
-        lowered.push(Ir::indent(lower_node(&node, cx)));
+        lowered.push(Ir::indent(lower_header_argument(&node, content, cx)));
     }
     lowered.extend(lower_element_stream(generic.into_iter(), cx));
     Ir::concat(lowered)
@@ -5930,7 +5951,7 @@ fn lower_commented_header_stream(
 /// recognition.
 fn lower_commented_begin(begin: &SyntaxNode, cx: LowerCtx<'_>, args: &[ArgSpec]) -> BeginParts {
     let elements: Vec<SyntaxElement> = begin.children_with_tokens().collect();
-    let mut declared = vec![false; elements.len()];
+    let mut declared = vec![None; elements.len()];
     let mut required_brace = vec![false; elements.len()];
     let mut slot = 0usize;
     let mut signature_matches = true;
@@ -5946,7 +5967,7 @@ fn lower_commented_begin(begin: &SyntaxNode, cx: LowerCtx<'_>, args: &[ArgSpec])
             signature_matches = false;
         }
         if let Some(spec) = spec {
-            declared[i] = true;
+            declared[i] = Some(spec.content);
             required_brace[i] = spec.required && kind == ArgKind::Brace;
         }
     }
@@ -5971,7 +5992,7 @@ fn lower_commented_begin(begin: &SyntaxNode, cx: LowerCtx<'_>, args: &[ArgSpec])
                 newlines += usize::from(token.kind() == SyntaxKind::NEWLINE);
                 end += 1;
             }
-            if declared.get(end).copied().unwrap_or(false)
+            if declared.get(end).is_some_and(Option::is_some)
                 || (newlines == 0
                     && matches!(
                         elements.get(end),
@@ -6006,7 +6027,7 @@ fn lower_commented_begin(begin: &SyntaxNode, cx: LowerCtx<'_>, args: &[ArgSpec])
                         SyntaxElement::Token(token) if token.kind() == SyntaxKind::WHITESPACE => {
                             None
                         }
-                        SyntaxElement::Node(_) => Some(declared[index]),
+                        SyntaxElement::Node(_) => Some(declared[index].is_some()),
                         _ => Some(false),
                     })
                     == Some(true);
@@ -9231,15 +9252,16 @@ fn body_ends_with_comment(node: &SyntaxNode, close: SyntaxKind) -> bool {
     false
 }
 
-/// Collapse a signature-marked [`ContentKind::TokenList`] to a single inline atom.
-/// This is the fallback outside paragraph reflow and for lists that cannot expose
-/// safe comma boundaries there. Interior newlines collapse to spaces, so a citation
-/// list written across lines (`\citep{\n  a,\n  b\n}`) formats identically to its
-/// one-line form (`\citep{a, b}`).
+/// Collapse top-level argument gaps without exposing word-wrap opportunities.
+/// Opaque environment values use this to stay together. A signature-marked
+/// [`ContentKind::TokenList`] also uses it outside paragraph reflow or when safe
+/// comma boundaries cannot be exposed there. Interior newlines collapse to
+/// spaces, so a citation list written across lines (`\citep{\n  a,\n  b\n}`)
+/// formats identically to its one-line form (`\citep{a, b}`).
 ///
 /// Returns `None` — the caller falls back to the generic form ([`lower_node`]) — when
 /// the group is *not* safely collapsible: it holds a blank-line paragraph break, a `%`
-/// comment (which must end its line), or force-break content (a nested environment,
+/// comment, docstrip framing, or force-break content (a nested environment,
 /// display math, `\\`). Those keep the indented multi-line block form. Mirrors
 /// [`lower_bracketed`]'s delimiter handling and edge-break trimming.
 fn collapse_arg_group(
@@ -9270,8 +9292,15 @@ fn collapse_arg_group(
                 // one-line generic lowering.
                 body.push(Ir::verbatim(gap.flat()));
             }
-            // A `%` comment must terminate its line, so the group cannot collapse.
-            SyntaxElement::Token(t) if t.kind() == SyntaxKind::COMMENT => return None,
+            // Comments and docstrip framing must retain their line boundaries.
+            SyntaxElement::Token(t)
+                if matches!(
+                    t.kind(),
+                    SyntaxKind::COMMENT | SyntaxKind::DOC_MARGIN | SyntaxKind::GUARD
+                ) =>
+            {
+                return None;
+            }
             SyntaxElement::Token(t) => body.push(Ir::verbatim(t.text())),
             SyntaxElement::Node(child) => {
                 let ir = lower_node(&child, cx);
