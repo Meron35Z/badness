@@ -121,7 +121,22 @@
     };
   }
 
-  function spec(points) {
+  function seriesColor(field, title, values, compact) {
+    return {
+      field: field,
+      type: "nominal",
+      title: title,
+      sort: values,
+      legend: {
+        orient: "top",
+        direction: "horizontal",
+        columns: compact ? 1 : 2,
+        labelLimit: 240,
+      },
+    };
+  }
+
+  function spec(points, caption, compact) {
     var dark = isDark();
     var fg = dark ? "#c8c9db" : "#333333";
     var grid = dark ? "#3b3f5c" : "#dddddd";
@@ -131,47 +146,36 @@
 
     return {
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
-      description:
-        "Dot plot of formatting speed relative to badness. Each dot is one " +
-        "document formatted by one tool; the vertical axis is mean time as a " +
-        "ratio to badness on a log scale, with badness on a dashed baseline " +
-        "at 1, faster tools below and slower tools above. See the data table " +
-        "for the underlying numbers.",
+      description: caption,
       width: "container",
-      height: 340,
+      height: formatters.length * Math.max(60, documents.length * 20),
       data: { values: points },
       layer: [
-        // Baseline at 1.0 (badness); everything below is faster, above slower.
+        // The shared baseline makes ratios comparable across documents.
         {
           mark: { type: "rule", strokeDash: [4, 4], color: grid },
-          encoding: { y: { datum: 1, type: "quantitative" } },
+          encoding: { x: { datum: 1, type: "quantitative" } },
         },
         {
           mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
           encoding: {
-            x: {
+            y: {
               field: "formatter",
               type: "nominal",
               title: "Tool",
               sort: formatters,
               axis: { labelAngle: 0 },
             },
-            // No xOffset: dots for every document share their tool's x position
-            // so they stack vertically at their respective ratios. Color still
-            // distinguishes documents, and hover disambiguates overlaps.
-            y: {
+            // Separate documents so dots at the baseline remain visible.
+            yOffset: { field: "document", sort: documents },
+            x: {
               field: "ratio",
               type: "quantitative",
               title: "Time relative to badness",
               scale: { type: "log", domain: domain, nice: false },
               axis: logAxis(domain, fg),
             },
-            color: {
-              field: "document",
-              type: "nominal",
-              title: "Document",
-              sort: documents,
-            },
+            color: seriesColor("document", "Document", documents, compact),
             tooltip: [
               { field: "document", title: "Document" },
               { field: "formatter", title: "Tool" },
@@ -208,7 +212,7 @@
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
       description: caption,
       width: "container",
-      height: memory ? 260 : metrics.length * 60,
+      height: memory ? 260 : servers.length * Math.max(60, metrics.length * 20),
       data: { values: points },
       config: chartConfig(),
     };
@@ -271,19 +275,13 @@
     }
     chart.encoding = {
       y: {
-        field: "metric",
+        field: "server",
         type: "nominal",
-        sort: metrics,
-        title: null,
-        axis: {
-          labelLimit: compact ? 85 : 150,
-          labelExpr: compact
-            ? "replace(replace(replace(replace(replace(datum.label, 'Document symbols', 'Symbols'), 'Go to definition', 'Definition'), 'Find references', 'References'), 'Workspace ready', 'Workspace'), 'Open files ready', 'Open files')"
-            : "datum.label",
-        },
+        sort: servers,
+        title: "Server",
+        axis: { labelAngle: 0 },
       },
-      // Separate servers within a row so equal timings remain visible.
-      yOffset: { field: "server", sort: servers },
+      yOffset: { field: "metric", sort: metrics },
       x: {
         field: "median_ms",
         type: "quantitative",
@@ -293,7 +291,12 @@
         scale: { type: "log", domain: domain, nice: false },
         axis: logAxis(domain, chart.config.axis.labelColor, true),
       },
-      color: color,
+      color: seriesColor(
+        "metric",
+        latency ? "Operation" : "Wait",
+        metrics,
+        compact,
+      ),
       tooltip: tooltip,
     };
     chart.layer = [
@@ -306,8 +309,7 @@
       },
       {
         transform: [{ filter: "datum.median_ms > 0" }],
-        mark: { type: "point", filled: true, size: 85, opacity: 1 },
-        encoding: { shape: { field: "server", scale: { domain: servers } } },
+        mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
       },
     ];
     return chart;
@@ -331,14 +333,11 @@
     }
     var block = container.closest(".bench-chart-block");
     var kind = block.dataset.chart;
+    var caption = block.querySelector("figcaption").textContent;
+    var compact = container.clientWidth < 500;
     var vlSpec = kind
-      ? lspSpec(
-          container.__benchPoints,
-          kind,
-          block.querySelector("figcaption").textContent,
-          container.clientWidth < 500,
-        )
-      : spec(container.__benchPoints);
+      ? lspSpec(container.__benchPoints, kind, caption, compact)
+      : spec(container.__benchPoints, caption, compact);
     // Alt text on the container, mirroring the spec description Vega puts on the
     // rendered SVG, so the chart is labeled for assistive tech either way.
     container.setAttribute("role", "img");

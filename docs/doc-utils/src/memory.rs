@@ -309,8 +309,9 @@ fn render_speed(benchmarks: &MemoryBenchmarks) -> String {
     output.push_str(&chart_block(
         "lsp-readiness",
         &readiness,
-        "Language-server readiness on a logarithmic scale. Dots show medians; \
-         lines span the minimum and maximum across fresh processes. Lower is faster.",
+        "Time until each server is ready, on a logarithmic scale. Dots show medians, \
+         and lines span the minimum and maximum across fresh sessions. Color \
+         distinguishes the waits. Farther left is faster.",
         &table,
     ));
 
@@ -346,9 +347,9 @@ fn render_speed(benchmarks: &MemoryBenchmarks) -> String {
     output.push_str(&chart_block(
         "lsp-latency",
         &latencies,
-        "Warm request latency on a logarithmic scale. Dots show medians; lines \
-         extend to p95 and are not confidence intervals. Lower is faster. \
-         Tooltips include sample counts, returned work, and failed or empty responses.",
+        "Warm request latency on a logarithmic scale. Dots show medians, and lines \
+         extend to the 95th percentile. Color distinguishes operations. Farther left \
+         is faster. Hover over a dot for sample counts and response details.",
         &table,
     ));
 

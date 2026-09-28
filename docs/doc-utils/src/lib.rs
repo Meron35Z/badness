@@ -336,32 +336,26 @@ struct Rendered {
 }
 
 /// Chart caption for the formatter results (`{{ benchmark-results }}`).
-const FORMAT_CAPTION: &str = "Formatting speed relative to <code>badness</code>. Each dot is one \
-     document formatted by one tool; the vertical position is mean wall-clock time as a \
-     ratio to <code>badness</code> on a log scale, so <code>badness</code> lies on the \
-     dashed baseline at 1, faster tools fall below it and slower tools rise above. Color \
-     distinguishes documents; hover a dot for the exact millisecond figures.";
+const FORMAT_CAPTION: &str = "Mean formatting time relative to <code>badness</code> \
+     on a logarithmic scale. The dashed line marks <code>badness</code> at 1; \
+     faster tools fall to the left. Color distinguishes documents. \
+     Hover over a dot for times in milliseconds.";
 
 /// Chart caption for the whole-project formatter results
 /// (`{{ benchmark-project-results }}`). Only `badness` and `tex-fmt` appear
 /// (latexindent has no recursive mode), and this is a folder `--check`, a
 /// different mode from the single-file rows.
 const FORMAT_PROJECT_CAPTION: &str =
-    "Whole-project formatting speed relative to <code>badness</code>. Each dot is one tool \
-     running a recursive <code>--check</code> over a real multi-file LaTeX project; the \
-     vertical position is mean wall-clock time as a ratio to <code>badness</code> on a log \
-     scale, so <code>badness</code> lies on the dashed baseline at 1, faster tools fall below \
-     it and slower tools rise above. This is a different mode from the single-file charts—read \
-     its ratio on its own terms. Hover a dot for the exact millisecond figures.";
+    "Mean time to check formatting across the thesis project, relative to \
+     <code>badness</code> on a logarithmic scale. The dashed line marks \
+     <code>badness</code> at 1; faster tools fall to the left. \
+     Hover over a dot for times in milliseconds.";
 
 /// Chart caption for the linter results (`{{ lint-benchmark-results }}`).
 const LINT_CAPTION: &str =
-    "Linting speed relative to <code>badness</code>. Each dot is one document checked \
-     by one tool; the vertical position is mean wall-clock time as a ratio to \
-     <code>badness</code> on a log scale, so <code>badness</code> lies on the dashed \
-     baseline at 1, faster tools fall below it and slower tools rise above. These tools \
-     report different problems, so a difference here is not a same-job speed verdict. \
-     Color distinguishes documents; hover a dot for the exact millisecond figures.";
+    "Mean linting time relative to <code>badness</code> on a logarithmic scale. \
+     The dashed line marks <code>badness</code> at 1; faster tools fall to the left. \
+     Color distinguishes documents. Hover over a dot for times in milliseconds.";
 
 /// A Markdown bullet list of tool versions, timing backend, host, and run date.
 fn render_meta(meta: &Meta) -> String {
