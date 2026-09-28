@@ -338,7 +338,7 @@ struct Rendered {
 /// Chart caption for the formatter results (`{{ benchmark-results }}`).
 const FORMAT_CAPTION: &str = "Mean formatting time relative to <code>badness</code> \
      on a logarithmic scale. The dashed line marks <code>badness</code> at 1; \
-     faster tools fall to the left. Color distinguishes documents. \
+     faster tools fall below it. Color distinguishes documents. \
      Hover over a dot for times in milliseconds.";
 
 /// Chart caption for the whole-project formatter results
@@ -348,13 +348,13 @@ const FORMAT_CAPTION: &str = "Mean formatting time relative to <code>badness</co
 const FORMAT_PROJECT_CAPTION: &str =
     "Mean time to check formatting across the thesis project, relative to \
      <code>badness</code> on a logarithmic scale. The dashed line marks \
-     <code>badness</code> at 1; faster tools fall to the left. \
+     <code>badness</code> at 1; faster tools fall below it. \
      Hover over a dot for times in milliseconds.";
 
 /// Chart caption for the linter results (`{{ lint-benchmark-results }}`).
 const LINT_CAPTION: &str =
     "Mean linting time relative to <code>badness</code> on a logarithmic scale. \
-     The dashed line marks <code>badness</code> at 1; faster tools fall to the left. \
+     The dashed line marks <code>badness</code> at 1; faster tools fall below it. \
      Color distinguishes documents. Hover over a dot for times in milliseconds.";
 
 /// A Markdown bullet list of tool versions, timing backend, host, and run date.

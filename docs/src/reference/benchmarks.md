@@ -59,9 +59,9 @@ The startup measurements cover three waits:
   diagnostics arrive and background work settles.
 
 After startup, we time requests for document symbols, hover information,
-definitions, references, and renaming. The chart shows the median and 95th
-percentile (p95) of these response times. Tooltips and expandable tables include
-the number of results returned, which can differ between servers.
+definitions, references, and renaming. The chart shows the median response
+times. Tooltips and expandable tables include the 95th percentile (p95) and the
+number of results returned, which can differ between servers.
 
 {{ lsp-benchmark-results }}
 

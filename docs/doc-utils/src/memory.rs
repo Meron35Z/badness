@@ -309,9 +309,9 @@ fn render_speed(benchmarks: &MemoryBenchmarks) -> String {
     output.push_str(&chart_block(
         "lsp-readiness",
         &readiness,
-        "Time until each server is ready, on a logarithmic scale. Dots show medians, \
-         and lines span the minimum and maximum across fresh sessions. Color \
-         distinguishes the waits. Farther left is faster.",
+        "Time until each server is ready, on a logarithmic scale. Dots show medians \
+         across fresh sessions, and color distinguishes the waits. Lower is faster. \
+         Hover over a dot for minimum and maximum times.",
         &table,
     ));
 
@@ -347,9 +347,9 @@ fn render_speed(benchmarks: &MemoryBenchmarks) -> String {
     output.push_str(&chart_block(
         "lsp-latency",
         &latencies,
-        "Warm request latency on a logarithmic scale. Dots show medians, and lines \
-         extend to the 95th percentile. Color distinguishes operations. Farther left \
-         is faster. Hover over a dot for sample counts and response details.",
+        "Warm request latency on a logarithmic scale. Dots show medians, and color \
+         distinguishes operations. Lower is faster. Hover over a dot for the 95th \
+         percentile, sample counts, and response details.",
         &table,
     ));
 
@@ -373,7 +373,7 @@ fn render_speed(benchmarks: &MemoryBenchmarks) -> String {
         .map(|target| format!("`{}` in `{}`", target.symbol, target.file))
         .unwrap_or_else(|| "the pinned navigation target".to_string());
     output.push_str(&format!(
-        "\n_Warm requests show median / p95 across all samples. Each target ran {runs} measured rounds in each of {sessions} fresh sessions after {warmups} warmup rounds; symbols and hover span {files} files, while definition, references, and rename use {target}. Rename constructs the workspace edit but does not apply it._\n"
+        "\n_Warm requests show medians across all samples, with p95 in tooltips and the table. Each target ran {runs} measured rounds in each of {sessions} fresh sessions after {warmups} warmup rounds; symbols and hover span {files} files, while definition, references, and rename use {target}. Rename constructs the workspace edit but does not apply it._\n"
     ));
 
     let notes: Vec<String> = benchmarks

@@ -148,27 +148,25 @@
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
       description: caption,
       width: "container",
-      height: formatters.length * Math.max(60, documents.length * 20),
+      height: 340,
       data: { values: points },
       layer: [
         // The shared baseline makes ratios comparable across documents.
         {
           mark: { type: "rule", strokeDash: [4, 4], color: grid },
-          encoding: { x: { datum: 1, type: "quantitative" } },
+          encoding: { y: { datum: 1, type: "quantitative" } },
         },
         {
           mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
           encoding: {
-            y: {
+            x: {
               field: "formatter",
               type: "nominal",
               title: "Tool",
               sort: formatters,
               axis: { labelAngle: 0 },
             },
-            // Separate documents so dots at the baseline remain visible.
-            yOffset: { field: "document", sort: documents },
-            x: {
+            y: {
               field: "ratio",
               type: "quantitative",
               title: "Time relative to badness",
@@ -212,7 +210,7 @@
       $schema: "https://vega.github.io/schema/vega-lite/v5.json",
       description: caption,
       width: "container",
-      height: memory ? 260 : servers.length * Math.max(60, metrics.length * 20),
+      height: memory ? 260 : 340,
       data: { values: points },
       config: chartConfig(),
     };
@@ -250,11 +248,9 @@
       return chart;
     }
 
-    var lower = latency ? "median_ms" : "min_ms";
-    var upper = latency ? "p95_ms" : "max_ms";
     var domain = logExtent(
-      points.flatMap(function (point) {
-        return [point.median_ms, point[lower], point[upper]];
+      points.map(function (point) {
+        return point.median_ms;
       }),
     );
     tooltip.push({ field: "median_ms", title: "Median (ms)", format: ".3f" });
@@ -274,15 +270,14 @@
       );
     }
     chart.encoding = {
-      y: {
+      x: {
         field: "server",
         type: "nominal",
         sort: servers,
         title: "Server",
         axis: { labelAngle: 0 },
       },
-      yOffset: { field: "metric", sort: metrics },
-      x: {
+      y: {
         field: "median_ms",
         type: "quantitative",
         title: latency
@@ -299,19 +294,8 @@
       ),
       tooltip: tooltip,
     };
-    chart.layer = [
-      {
-        transform: [
-          { filter: "datum." + lower + " > 0 && datum." + upper + " > 0" },
-        ],
-        mark: { type: "rule", strokeWidth: 2 },
-        encoding: { x: { field: lower }, x2: { field: upper } },
-      },
-      {
-        transform: [{ filter: "datum.median_ms > 0" }],
-        mark: { type: "point", filled: true, size: 130, opacity: 0.9 },
-      },
-    ];
+    chart.transform = [{ filter: "datum.median_ms > 0" }];
+    chart.mark = { type: "point", filled: true, size: 130, opacity: 0.9 };
     return chart;
   }
 
