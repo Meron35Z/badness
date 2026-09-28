@@ -2343,6 +2343,14 @@ fn lsp_completion_signatures_respect_label_details_support() {
                 .find(|i| i.label == name)
                 .unwrap();
             assert_eq!(item.detail.as_deref(), Some(signature));
+            assert_eq!(
+                item.kind,
+                Some(if name == "omega" {
+                    CompletionItemKind::CONSTANT
+                } else {
+                    CompletionItemKind::FUNCTION
+                }),
+            );
             assert!(item.documentation.is_none());
             if support == Some(true) {
                 assert_eq!(
@@ -2363,6 +2371,7 @@ fn lsp_completion_signatures_respect_label_details_support() {
             let resolved: CompletionItem =
                 serde_json::from_value(recv_response(&client).result().unwrap()).unwrap();
             assert_eq!(resolved.detail, item.detail);
+            assert_eq!(resolved.kind, item.kind);
             assert_eq!(resolved.label_details, item.label_details);
             assert_eq!(resolved.text_edit, item.text_edit);
             assert!(resolved.documentation.is_some());
@@ -2397,11 +2406,15 @@ fn lsp_completion_commands_environments_and_refs() {
     let names = labels(&cmds);
     assert!(names.contains(&"subsection"), "{names:?}");
     assert!(names.contains(&"subsubsection"), "{names:?}");
-    assert!(
-        cmds.iter()
-            .all(|i| i.kind == Some(CompletionItemKind::FUNCTION)),
-        "command items are FUNCTION"
-    );
+    for (name, kind) in [
+        ("subsection", CompletionItemKind::FUNCTION),
+        ("subsubsection", CompletionItemKind::FUNCTION),
+        ("subset", CompletionItemKind::CONSTANT),
+        ("subseteq", CompletionItemKind::CONSTANT),
+    ] {
+        let item = cmds.iter().find(|item| item.label == name).unwrap();
+        assert_eq!(item.kind, Some(kind), "{name}");
+    }
 
     // Environment names inside `\begin{it|emize}` (line 3) carry the auto-`\end`
     // snippet.

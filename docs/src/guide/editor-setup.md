@@ -22,7 +22,7 @@ The language server is also the sole consumer of the `[build]` section of
 `badness.toml`, which locates the compile's `.aux` artifacts; see the
 [Configuration reference](../reference/configuration.md#build).
 
-## Command signatures in completion
+## Command completion
 
 Command suggestions include short signatures, such as `\section[]{}` and
 `\vspace{}`, before you select an item. Clients that support completion label
@@ -32,8 +32,17 @@ documentation loads when the client resolves the selected item.
 
 Signatures use the document's definitions, loaded local packages, and Badness's
 built-in data. They display the known brace and bracket argument slots; they do
-not describe every TeX argument protocol. This display does not insert arguments
-or change completion icons.
+not describe every TeX argument protocol. The signature display does not insert
+arguments.
+
+Known standard math symbols, such as `\omega`, `\sum`, and `\leq`, have the
+completion kind `Constant`. Argument-taking commands such as `\vspace` retain
+`Function`. Editors can use this distinction for icons and automatic brackets;
+for example, blink.cmp can insert braces after `\vspace` while leaving `\omega`
+bare. Recognized definitions in the document or loaded local packages, and
+explicit project declarations, override the built-in symbol classification.
+Commands outside this curated symbol set keep their existing completion kinds;
+an empty signature alone does not identify a symbol.
 
 ## LaTeX3 completion
 

@@ -7146,7 +7146,10 @@ fn build_completion_items(
             crate::completion::candidates_with_symbols(ctx, sigs, model, declared, symbols)
                 .into_iter()
                 .map(|candidate| {
-                    let command = candidate.kind == CandidateKind::Command;
+                    let command = matches!(
+                        candidate.kind,
+                        CandidateKind::Command | CandidateKind::SymbolCommand
+                    );
                     let mut item = candidate_to_item(candidate, file.as_deref());
                     if command {
                         completion_resolve::add_command_signature(&mut item, sigs);
@@ -7171,7 +7174,7 @@ fn candidate_to_item(candidate: CompletionCandidate, file: Option<&Path>) -> Com
     let kind = match candidate.kind {
         CandidateKind::Command => CompletionItemKind::FUNCTION,
         CandidateKind::Variable => CompletionItemKind::VARIABLE,
-        CandidateKind::Constant => CompletionItemKind::CONSTANT,
+        CandidateKind::Constant | CandidateKind::SymbolCommand => CompletionItemKind::CONSTANT,
         CandidateKind::Environment => CompletionItemKind::CLASS,
         CandidateKind::Label => CompletionItemKind::REFERENCE,
         CandidateKind::Package => CompletionItemKind::MODULE,
@@ -7182,10 +7185,12 @@ fn candidate_to_item(candidate: CompletionCandidate, file: Option<&Path>) -> Com
     };
     let data = file.and_then(|file| {
         let payload = match candidate.kind {
-            CandidateKind::Command => completion_resolve::CompletionResolveData::Command {
-                name: candidate.label.clone(),
-                file: file.to_path_buf(),
-            },
+            CandidateKind::Command | CandidateKind::SymbolCommand => {
+                completion_resolve::CompletionResolveData::Command {
+                    name: candidate.label.clone(),
+                    file: file.to_path_buf(),
+                }
+            }
             CandidateKind::Environment => completion_resolve::CompletionResolveData::Environment {
                 name: candidate.label.clone(),
                 file: file.to_path_buf(),

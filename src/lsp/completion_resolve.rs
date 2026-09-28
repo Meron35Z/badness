@@ -364,7 +364,14 @@ mod tests {
                     slots,
                 );
                 assert!(item.documentation.is_none(), "documentation stays lazy");
-                assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+                assert_eq!(
+                    item.kind,
+                    Some(if name == "omega" {
+                        CompletionItemKind::CONSTANT
+                    } else {
+                        CompletionItemKind::FUNCTION
+                    }),
+                );
                 assert_eq!(item.insert_text_format, None);
                 let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &item.text_edit else {
                     panic!("command replacement edit")
@@ -377,6 +384,91 @@ mod tests {
                     assert!(resolved.documentation.is_some());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn symbol_completion_kinds_are_conservative_and_keep_resolve_data() {
+        let path = Path::new("/p/main.tex");
+        let mut db = IncrementalDatabase::default();
+        for (name, kind) in [
+            ("alpha", CompletionItemKind::CONSTANT),
+            ("Gamma", CompletionItemKind::CONSTANT),
+            ("omega", CompletionItemKind::CONSTANT),
+            ("infty", CompletionItemKind::CONSTANT),
+            ("sum", CompletionItemKind::CONSTANT),
+            ("leq", CompletionItemKind::CONSTANT),
+            ("rightarrow", CompletionItemKind::CONSTANT),
+            ("langle", CompletionItemKind::CONSTANT),
+            ("vspace", CompletionItemKind::FUNCTION),
+            ("sqrt", CompletionItemKind::FUNCTION),
+            ("mathord", CompletionItemKind::FUNCTION),
+            ("verb", CompletionItemKind::FUNCTION),
+            ("item", CompletionItemKind::FUNCTION),
+            ("def", CompletionItemKind::FUNCTION),
+        ] {
+            let src = format!("\\{name}");
+            let file = db.upsert_file(path, src.clone());
+            db.reparse_stage_edits(file, None);
+            let item = complete(&db, path, &src, &src)
+                .into_iter()
+                .find(|i| i.label == name)
+                .unwrap();
+            assert_eq!(item.kind, Some(kind), "{name}");
+            assert!(item.data.is_some(), "{name} retains resolve data");
+            assert!(item.detail.is_some(), "{name} retains its signature");
+            assert!(item.documentation.is_none());
+            assert_eq!(item.insert_text_format, None);
+            let resolved = resolve_item(&db, item.clone());
+            assert_eq!(resolved.kind, item.kind);
+            assert_eq!(resolved.text_edit, item.text_edit);
+            assert_eq!(resolved.detail, item.detail);
+            assert!(resolved.documentation.is_some(), "{name} resolves");
+        }
+    }
+
+    #[test]
+    fn symbol_completion_yields_to_document_and_package_definitions() {
+        let path = Path::new("/p/main.tex");
+        for definition in [
+            "\\renewcommand{\\omega}[1]{#1}",
+            "\\renewcommand{\\omega}{x}",
+            "\\renewcommand{\\omega}[1][x]{#1}",
+            "\\def\\omega#1{#1}",
+            "\\RenewDocumentCommand{\\omega}{m}{#1}",
+        ] {
+            let mut db = IncrementalDatabase::default();
+            let src = format!("{definition}\n\\ome");
+            for cached in [false, true] {
+                if cached {
+                    let file = db.upsert_file(path, src.clone());
+                    db.reparse_stage_edits(file, None);
+                }
+                let item = complete(&db, path, &src, "\\ome")
+                    .into_iter()
+                    .find(|i| i.label == "omega")
+                    .unwrap();
+                assert_eq!(
+                    item.kind,
+                    Some(CompletionItemKind::FUNCTION),
+                    "{definition}"
+                );
+            }
+
+            let file = db.upsert_file(Path::new("/p/mypkg.sty"), definition.to_string());
+            db.reparse_stage_edits(file, None);
+            let src = "\\usepackage{mypkg}\n\\ome";
+            let file = db.upsert_file(path, src.to_string());
+            db.reparse_stage_edits(file, None);
+            let item = complete(&db, path, src, "\\ome")
+                .into_iter()
+                .find(|i| i.label == "omega")
+                .unwrap();
+            assert_eq!(
+                item.kind,
+                Some(CompletionItemKind::FUNCTION),
+                "{definition}"
+            );
         }
     }
 

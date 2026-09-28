@@ -22,8 +22,8 @@ use crate::declarations::ResolvedDeclarations;
 use crate::semantic::SemanticModel;
 use crate::semantic::builder::{cite_command, is_glossary_ref_command, ref_command};
 use crate::semantic::completion::{
-    arg_enum_values, class_names, color_models, color_names, package_names, pgf_libraries,
-    tikz_libraries,
+    arg_enum_values, class_names, color_models, color_names, is_symbol_command, package_names,
+    pgf_libraries, tikz_libraries,
 };
 use crate::semantic::expl3::{
     mode::ModeIndex,
@@ -127,6 +127,8 @@ impl FileArgKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateKind {
     Command,
+    /// A known symbol command, retaining command signatures and documentation.
+    SymbolCommand,
     Variable,
     Constant,
     Environment,
@@ -649,10 +651,16 @@ fn command_candidates(
     names
         .into_iter()
         .map(|label| CompletionCandidate {
-            kind: kinds
-                .get(label.as_str())
-                .copied()
-                .unwrap_or(CandidateKind::Command),
+            kind: kinds.get(label.as_str()).copied().unwrap_or_else(|| {
+                if is_symbol_command(&label)
+                    && user_sigs.command(&label).is_none()
+                    && declared.command_like(&label).is_none()
+                {
+                    CandidateKind::SymbolCommand
+                } else {
+                    CandidateKind::Command
+                }
+            }),
             label,
             insert_text: None,
             snippet: false,
@@ -830,6 +838,18 @@ mod tests {
                 prefix: "sec".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn a_declared_command_alias_overrides_symbol_classification() {
+        let declarations = declared("[commands.omega]\nlike = 'ref'\n");
+        let candidates =
+            command_candidates(&SignatureDb::default(), &declarations, "ome", false, &[]);
+        let omega = candidates
+            .iter()
+            .find(|item| item.label == "omega")
+            .unwrap();
+        assert_eq!(omega.kind, CandidateKind::Command);
     }
 
     #[test]
