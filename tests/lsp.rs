@@ -124,11 +124,19 @@ fn send_notification(client: &Connection, method: &str, params: serde_json::Valu
 fn start_server(
     init_options: Option<serde_json::Value>,
 ) -> (Connection, std::thread::JoinHandle<()>) {
+    start_server_with_capabilities(init_options, ClientCapabilities::default())
+}
+
+fn start_server_with_capabilities(
+    init_options: Option<serde_json::Value>,
+    capabilities: ClientCapabilities,
+) -> (Connection, std::thread::JoinHandle<()>) {
     let (server, client) = Connection::memory();
     let server_thread = std::thread::spawn(move || badness::lsp::serve(server).unwrap());
 
     let params = InitializeParams {
         initialization_options: init_options,
+        capabilities,
         ..Default::default()
     };
     send_request(
@@ -198,6 +206,14 @@ fn assert_server_capabilities(init: &InitializeResult) {
     assert!(
         init.capabilities.completion_provider.is_some(),
         "server must advertise completionProvider"
+    );
+    assert_eq!(
+        init.capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.completion_item.as_ref())
+            .and_then(|item| item.label_details_support),
+        Some(true),
     );
     assert!(
         matches!(
@@ -2298,6 +2314,61 @@ fn lsp_expl3_completion_tracks_loaded_package_buffers() {
     let items = complete_draining(&client, 4, &uri, Position::new(2, 5));
     assert!(!labels(&items).contains(&"pkg_new:n"));
     shutdown(&client, server_thread);
+}
+
+#[test]
+fn lsp_completion_signatures_respect_label_details_support() {
+    for support in [None, Some(false), Some(true)] {
+        let capabilities = match support {
+            None => ClientCapabilities::default(),
+            Some(support) => serde_json::from_value(serde_json::json!({
+                "textDocument": {"completion": {"completionItem": {
+                    "labelDetailsSupport": support
+                }}}
+            }))
+            .unwrap(),
+        };
+        let (client, server_thread) = start_server_with_capabilities(None, capabilities);
+        let uri: Uri = "file:///completion-signatures.tex".parse().unwrap();
+        did_open(&client, &uri, 1, "\\sec\n\\vsp\n\\ome\n");
+        recv_diagnostics(&client);
+
+        for (line, name, signature, slots) in [
+            (0, "section", "\\section[]{}", Some("[]{}")),
+            (1, "vspace", "\\vspace{}", Some("{}")),
+            (2, "omega", "\\omega", None),
+        ] {
+            let item = complete(&client, 2, &uri, Position::new(line, 4))
+                .into_iter()
+                .find(|i| i.label == name)
+                .unwrap();
+            assert_eq!(item.detail.as_deref(), Some(signature));
+            assert!(item.documentation.is_none());
+            if support == Some(true) {
+                assert_eq!(
+                    item.label_details
+                        .as_ref()
+                        .and_then(|d| d.detail.as_deref()),
+                    slots,
+                );
+            } else {
+                assert!(item.label_details.is_none(), "unsupported labelDetails");
+            }
+            send_request(
+                &client,
+                3,
+                "completionItem/resolve",
+                serde_json::to_value(&item).unwrap(),
+            );
+            let resolved: CompletionItem =
+                serde_json::from_value(recv_response(&client).result().unwrap()).unwrap();
+            assert_eq!(resolved.detail, item.detail);
+            assert_eq!(resolved.label_details, item.label_details);
+            assert_eq!(resolved.text_edit, item.text_edit);
+            assert!(resolved.documentation.is_some());
+        }
+        shutdown(&client, server_thread);
+    }
 }
 
 #[test]

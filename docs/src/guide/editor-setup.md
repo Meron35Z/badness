@@ -22,6 +22,19 @@ The language server is also the sole consumer of the `[build]` section of
 `badness.toml`, which locates the compile's `.aux` artifacts; see the
 [Configuration reference](../reference/configuration.md#build).
 
+## Command signatures in completion
+
+Command suggestions include short signatures, such as `\section[]{}` and
+`\vspace{}`, before you select an item. Clients that support completion label
+details can display the argument suffix beside the command name. Other clients
+receive the full signature in the completion item's `detail` field. Full
+documentation loads when the client resolves the selected item.
+
+Signatures use the document's definitions, loaded local packages, and Badness's
+built-in data. They display the known brace and bracket argument slots; they do
+not describe every TeX argument protocol. This display does not insert arguments
+or change completion icons.
+
 ## LaTeX3 completion
 
 Badness completes expl3 functions, variables, and constants inside

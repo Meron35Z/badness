@@ -1,9 +1,7 @@
-//! `completionItem/resolve` computation. Completion items ship lean — only
-//! `label`/`kind`/`insert_text` — so the list stays cheap to build over a large
-//! candidate universe (the CWL command tier, a whole bibliography). When the
-//! client highlights an item it sends it back here, and we attach the expensive
-//! detail lazily: a one-line `detail` shown inline and a markdown `documentation`
-//! card.
+//! `completionItem/resolve` computation. Command items include short signatures
+//! in the initial response. When the client highlights an item, we attach its
+//! markdown documentation and any detail not already supplied. Citation cards
+//! and environment signatures remain lazy.
 //!
 //! The item carries an opaque [`CompletionResolveData`] in its `data` field
 //! (serialized when the item was built, echoed back verbatim by the client per
@@ -24,7 +22,7 @@ use super::*;
 use crate::bib::ast as bib_ast;
 use crate::bib::syntax::{SyntaxKind as BibSyntaxKind, SyntaxNode as BibSyntaxNode};
 use crate::semantic::signature::ArgSpec;
-use lsp_types::{Documentation, MarkupContent, MarkupKind};
+use lsp_types::{CompletionItemLabelDetails, Documentation, MarkupContent, MarkupKind};
 use serde::{Deserialize, Serialize};
 
 /// The opaque payload carried in a [`CompletionItem`]'s `data` field, identifying
@@ -72,7 +70,9 @@ pub(crate) fn resolve(snapshot: &Analysis, mut item: CompletionItem) -> Completi
     };
 
     if let Some((detail, documentation)) = detail_doc {
-        item.detail = Some(detail);
+        // The document may have changed since completion. Preserve the initial
+        // prototype so it stays consistent with the item's label details.
+        item.detail.get_or_insert(detail);
         item.documentation = Some(Documentation::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: documentation,
@@ -158,16 +158,33 @@ fn first_author(authors: &str) -> String {
 
 // --- Command / environment ----------------------------------------------------
 
+/// Attach the short command signature using the scope already read by completion.
+/// Documentation and provenance rendering stay on the resolve path.
+pub(super) fn add_command_signature(item: &mut CompletionItem, scope: &SignatureDb) {
+    let Some((sig, _)) = super::hover::lookup_command(scope, &item.label) else {
+        return;
+    };
+    let (detail, slots) = command_signature(&item.label, &sig.args);
+    item.detail = Some(detail);
+    item.label_details = (!slots.is_empty()).then_some(CompletionItemLabelDetails {
+        detail: Some(slots),
+        description: None,
+    });
+}
+
+/// The full command prototype and the suffix displayed beside its completion label.
+fn command_signature(name: &str, args: &[ArgSpec]) -> (String, String) {
+    let slots = arg_slots(args);
+    (format!("\\{name}{slots}"), slots)
+}
+
 /// `(detail, documentation)` for a command: the synthesized prototype as the
 /// inline detail and the full hover card as the documentation. Scope-first lookup
 /// (tracked-document scope, else built-in/CWL only).
 fn command_detail(snapshot: &Analysis, file: &Path, name: &str) -> Option<(String, String)> {
     let scope = scope_for(snapshot, file);
     let (sig, provenance) = super::hover::lookup_command(&scope, name)?;
-    let mut detail = format!("\\{name}");
-    for arg in sig.args.iter() {
-        detail.push_str(super::hover::arg_slot(arg.kind));
-    }
+    let (detail, _) = command_signature(name, &sig.args);
     Some((detail, super::hover::render_command(name, sig, &provenance)))
 }
 
@@ -205,7 +222,7 @@ mod tests {
     use super::*;
     use crate::incremental::IncrementalDatabase;
 
-    /// Run completion at the first byte of `needle`, returning the items (each
+    /// Run completion after the last `needle`, returning the items (each
     /// carrying its `data` payload) so a test can resolve them.
     fn complete(
         db: &IncrementalDatabase,
@@ -214,7 +231,7 @@ mod tests {
         needle: &str,
     ) -> Vec<CompletionItem> {
         let snapshot = db.snapshot();
-        let offset = src.find(needle).expect("needle present") + needle.len();
+        let offset = src.rfind(needle).expect("needle present") + needle.len();
         let idx = LineIndex::new(src);
         let (line, character) = idx.position(offset);
         let uri: Uri = format!("file://{}", path.display()).parse().expect("uri");
@@ -313,6 +330,114 @@ mod tests {
             "full namespace returned regardless of key prefix: {:?}",
             items.iter().map(|i| &i.label).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn command_signatures_are_available_before_resolve() {
+        let path = Path::new("/p/main.tex");
+        for (src, name, signature, slots) in [
+            ("\\sec", "section", "\\section[]{}", Some("[]{}")),
+            ("\\vsp", "vspace", "\\vspace{}", Some("{}")),
+            ("\\ome", "omega", "\\omega", None),
+            (
+                "\\renewcommand{\\section}[2]{#1#2}\n\\sec",
+                "section",
+                "\\section{}{}",
+                Some("{}{}"),
+            ),
+        ] {
+            let mut db = IncrementalDatabase::default();
+            // Both fresh-buffer fallback and the cached path must expose signatures.
+            for cached in [false, true] {
+                if cached {
+                    let file = db.upsert_file(path, src.to_string());
+                    db.reparse_stage_edits(file, None);
+                }
+                let prefix = src.rsplit('\n').next().unwrap();
+                let items = complete(&db, path, src, prefix);
+                let item = items.into_iter().find(|i| i.label == name).unwrap();
+                assert_eq!(item.detail.as_deref(), Some(signature), "{src}, {cached}");
+                assert_eq!(
+                    item.label_details
+                        .as_ref()
+                        .and_then(|d| d.detail.as_deref()),
+                    slots,
+                );
+                assert!(item.documentation.is_none(), "documentation stays lazy");
+                assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+                assert_eq!(item.insert_text_format, None);
+                let Some(lsp_types::CompletionTextEdit::Edit(edit)) = &item.text_edit else {
+                    panic!("command replacement edit")
+                };
+                assert_eq!(edit.new_text, name, "signature is display-only");
+                if cached {
+                    let resolved = resolve_item(&db, item.clone());
+                    assert_eq!(resolved.detail, item.detail);
+                    assert_eq!(resolved.label_details, item.label_details);
+                    assert!(resolved.documentation.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn initial_command_signatures_use_the_loaded_package_scope() {
+        let path = Path::new("/p/main.tex");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(
+            Path::new("/p/mypkg.sty"),
+            "\\renewcommand{\\section}[2]{#1#2}".to_string(),
+        );
+        db.reparse_stage_edits(file, None);
+        for (src, signature) in [
+            ("\\usepackage{mypkg}\n\\sec", "\\section{}{}"),
+            (
+                "\\usepackage{mypkg}\n\\renewcommand{\\section}[1]{#1}\n\\sec",
+                "\\section{}",
+            ),
+        ] {
+            let file = db.upsert_file(path, src.to_string());
+            db.reparse_stage_edits(file, None);
+            let item = complete(&db, path, src, "\\sec")
+                .into_iter()
+                .find(|i| i.label == "section")
+                .unwrap();
+            assert_eq!(item.detail.as_deref(), Some(signature));
+            let resolved = resolve_item(&db, item.clone());
+            assert_eq!(resolved.detail, item.detail);
+        }
+    }
+
+    #[test]
+    fn completion_only_names_have_no_signature() {
+        let src = "\\ExplSyntaxOn\n\\cs_new:Nn \\democompletion:n {#1}\n\\democompletion:";
+        let path = Path::new("/p/main.tex");
+        let db = IncrementalDatabase::default();
+        let item = complete(&db, path, src, "\\democompletion:")
+            .into_iter()
+            .find(|i| i.label == "democompletion:n")
+            .unwrap();
+        assert!(item.detail.is_none());
+        assert!(item.label_details.is_none());
+    }
+
+    #[test]
+    fn resolve_preserves_the_initial_command_signature_after_an_edit() {
+        let src = "\\newcommand{\\demo}[1]{#1}\n\\dem";
+        let path = Path::new("/p/main.tex");
+        let mut db = IncrementalDatabase::default();
+        let file = db.upsert_file(path, src.to_string());
+        db.reparse_stage_edits(file, None);
+        let item = complete(&db, path, src, "\\dem")
+            .into_iter()
+            .find(|i| i.label == "demo")
+            .unwrap();
+        assert_eq!(item.detail.as_deref(), Some("\\demo{}"));
+        let file = db.upsert_file(path, src.replace("[1]{#1}", "[2]{#1#2}"));
+        db.reparse_stage_edits(file, None);
+        let resolved = resolve_item(&db, item.clone());
+        assert_eq!(resolved.detail, item.detail);
+        assert_eq!(resolved.label_details, item.label_details);
     }
 
     #[test]

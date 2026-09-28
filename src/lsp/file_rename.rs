@@ -1341,6 +1341,7 @@ mod tests {
             supports_pull_diagnostics: false,
             supports_diagnostic_refresh: false,
             supports_dynamic_watchers: false,
+            supports_completion_label_details: false,
             next_request_id: 1,
             position_encoding: PositionEncoding::Utf16,
             workspace_roots: Vec::new(),

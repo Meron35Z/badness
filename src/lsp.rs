@@ -323,8 +323,11 @@ fn server_capabilities(
                 ":".to_owned(),
             ]),
             // A highlighted item is sent back via `completionItem/resolve` to gain
-            // its signature/citation detail lazily (see [`completion_resolve`]).
+            // documentation and remaining detail lazily (see [`completion_resolve`]).
             resolve_provider: Some(true),
+            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
+                label_details_support: Some(true),
+            }),
             ..Default::default()
         }),
         // texlab's spelling for the custom `textDocument/forwardSearch` method,
@@ -378,6 +381,7 @@ struct GlobalState {
     /// on `initialized` we register watchers for `**/*.{tex,bib}` and `badness.toml`
     /// and reanalyze on on-disk edits to non-open project files.
     supports_dynamic_watchers: bool,
+    supports_completion_label_details: bool,
     /// Monotonic id for server→client requests (e.g. `workspace/diagnostic/refresh`,
     /// `client/registerCapability`). Namespaced from the client's request ids, so they
     /// never collide.
@@ -1054,6 +1058,7 @@ enum WorkerJob {
         text: Arc<TextBuffer>,
         position: Position,
         texmf: TexmfConfig,
+        supports_label_details: bool,
     },
     /// A completion-resolve request: attach lazy signature/citation detail to a
     /// highlighted item on the read pool and reply to `id`. The item's `data`
@@ -1315,6 +1320,13 @@ fn client_show_document_support(init_params: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+fn client_completion_label_details_support(init_params: &serde_json::Value) -> bool {
+    init_params
+        .pointer("/capabilities/textDocument/completion/completionItem/labelDetailsSupport")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// The workspace this server owns, as filesystem paths: the `workspaceFolders`,
 /// falling back to the deprecated `rootUri`. Empty when the client opened a bare
 /// file, which an inverse-search client reads as "will take anything".
@@ -1435,6 +1447,7 @@ fn main_loop(
         supports_pull_diagnostics,
         supports_diagnostic_refresh,
         supports_dynamic_watchers,
+        supports_completion_label_details: client_completion_label_details_support(&init_params),
         next_request_id: 1,
         position_encoding: encoding,
         workspace_roots: workspace_roots(&init_params),
@@ -2314,6 +2327,7 @@ fn on_completion(
         text,
         position,
         texmf,
+        supports_label_details: state.supports_completion_label_details,
     });
 }
 
@@ -3473,6 +3487,7 @@ impl Worker {
                 text,
                 position,
                 texmf,
+                supports_label_details,
             } => {
                 // Completion reads run on the read pool against a snapshot, like
                 // formatting/symbols (id-bound responses, not coalesced). The TEXMF
@@ -3480,7 +3495,16 @@ impl Worker {
                 let snapshot = self.db.snapshot();
                 let out_tx = self.out_tx.clone();
                 self.read_spawner.spawn(move || {
-                    run_completion(&snapshot, id, &uri, &text, position, &texmf, &out_tx)
+                    run_completion(
+                        &snapshot,
+                        id,
+                        &uri,
+                        &text,
+                        position,
+                        &texmf,
+                        supports_label_details,
+                        &out_tx,
+                    )
                 });
             }
             WorkerJob::ResolveCompletion { id, item } => {
@@ -5298,6 +5322,7 @@ fn run_completion(
     text: &TextBuffer,
     position: Position,
     texmf: &TexmfConfig,
+    supports_label_details: bool,
     out_tx: &WorkerSender,
 ) {
     // The salsa-key path is derived from the URI (the same mapping `on_completion` uses).
@@ -5305,7 +5330,12 @@ fn run_completion(
     // The `[texmf]` config is threaded down; the installed-tree index is resolved
     // *only* when the cursor is in a package/class argument (see
     // `build_completion_items`), so a command/label completion never pays the walk.
-    let items = compute_completion(snapshot, uri, &path, text, position, texmf);
+    let mut items = compute_completion(snapshot, uri, &path, text, position, texmf);
+    if !supports_label_details {
+        for item in &mut items {
+            item.label_details = None;
+        }
+    }
     // `is_incomplete`: command/label/key universes are prefix-filtered server-side, so
     // the client re-queries as the typed prefix narrows.
     let result = serde_json::to_value(CompletionResponse::List(CompletionList {
@@ -7116,7 +7146,11 @@ fn build_completion_items(
             crate::completion::candidates_with_symbols(ctx, sigs, model, declared, symbols)
                 .into_iter()
                 .map(|candidate| {
+                    let command = candidate.kind == CandidateKind::Command;
                     let mut item = candidate_to_item(candidate, file.as_deref());
+                    if command {
+                        completion_resolve::add_command_signature(&mut item, sigs);
+                    }
                     if let Some(range) = replacement {
                         item.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit {
                             range,
@@ -7132,7 +7166,7 @@ fn build_completion_items(
 
 /// Map a neutral [`CompletionCandidate`] onto an `lsp_types::CompletionItem`. A
 /// command/environment carries resolve `data` (its name + originating `file`) so
-/// its signature can be attached lazily; a label carries none.
+/// its documentation can be attached lazily; a label carries none.
 fn candidate_to_item(candidate: CompletionCandidate, file: Option<&Path>) -> CompletionItem {
     let kind = match candidate.kind {
         CandidateKind::Command => CompletionItemKind::FUNCTION,
@@ -8245,6 +8279,7 @@ mod tests {
             supports_pull_diagnostics: false,
             supports_diagnostic_refresh: false,
             supports_dynamic_watchers: false,
+            supports_completion_label_details: false,
             next_request_id: 1,
             position_encoding: PositionEncoding::Utf16,
             workspace_roots: Vec::new(),
