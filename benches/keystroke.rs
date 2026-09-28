@@ -3,8 +3,7 @@
 //! `benches/formatting.rs` times the per-byte formatter work and
 //! `benches/compare_format.sh` times the CLI, but neither touches
 //! [`IncrementalDatabase`] or the `didChange` splice — the composition a real
-//! editor session runs on every character. `tests/scaling.rs` guards growth
-//! ratios, not the pipeline. This bench is that missing row: the path from a
+//! editor session runs on every character. This bench measures the path from a
 //! `didChange` notification to a parse tree, timed as one thing.
 //!
 //! Four rows per document, of which the first is a reference rather than a stage:

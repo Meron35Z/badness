@@ -415,9 +415,9 @@ sources below are missing.
   green subtree when hashbrown grows the table; a depth chain therefore
   rehashes progressively longer prefixes. Check newer rowan releases and raise
   this upstream before adding a local cache fork. Do not disable green-node
-  interning without measuring the memory regression. Once fixed, add a
-  parser-only brace-depth case to `tests/scaling.rs` at `MAX_RATIO`, using a
-  larger thread stack so the guard reaches its asymptotic regime.
+  interning without measuring the memory regression. Once fixed, verify
+  parser-only brace-depth scaling in a benchmark, using a larger thread stack
+  so the measurement reaches its asymptotic regime.
 
 - [ ] **Mine the `latexindent` corpus for construct coverage** (human-in-the-loop,
   ongoing). Skill: `.agents/skills/formatter-fixture/`. The corpus is read as a

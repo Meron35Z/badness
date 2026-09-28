@@ -103,9 +103,8 @@ task bench:gate
 
 `benches/keystroke.rs` times the composition a real editor session runs on every
 character, which nothing else here touches: `benches/formatting.rs` and the CLI
-comparison never construct an `IncrementalDatabase`, and `tests/scaling.rs`
-guards growth ratios rather than the pipeline. Four rows per document, of which
-the first is a reference rather than a stage:
+comparison never construct an `IncrementalDatabase`. Four rows per document, of
+which the first is a reference rather than a stage:
 
 0. **`text copy (reference)`** — one allocation and one linear copy of the
    document. Nothing in the pipeline calls this; it is the machine-independent
