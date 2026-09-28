@@ -1,75 +1,16 @@
 # Benchmarks
 
-Wall-clock speed of `badness` against comparable tools, measured with
-[hyperfine]: the **formatter** against
-[`tex-fmt`](https://github.com/wgunderwood/tex-fmt) and
-[`latexindent`](https://github.com/cmhughes/latexindent.pl), and the **linter**
-against the classic TeX Live checkers [`lacheck`](https://ctan.org/pkg/lacheck)
-and [`chktex`](https://ctan.org/pkg/chktex).
-
-These numbers measure *speed only*, never output or diagnostic equivalence, and
-the tools do genuinely different amounts of work:
-
-- `latexindent` is a Perl script that parses LaTeX into a tree and reflows it
-  according a set of highly configurable rules. It is the most featureful
-  formatter here, but also the slowest.
-- `tex-fmt` breaks overfull lines greedily but does not reflow: it won't rewrap
-  lines that already fit, so it moves far less text than `badness`, which
-  reflows each paragraph to the target width.
-- Among the linters, `lacheck` is a small classic checker, `chktex` is
-  regex-driven, and `badness lint` does a full CST parse plus its rule set.
-
-The absolute milliseconds are the real latencies—what you actually wait—but they
-are machine- and run-dependent. And because the tools do different work, a
-cross-tool difference is not a claim that one tool is faster at the same job.
-
-The figures below are regenerated manually with `task bench` and committed as a
-machine-readable artifact (`benches/benchmark_results.json`); they are never
-re-measured when this site is built or in CI.
-
-[hyperfine]: https://github.com/sharkdp/hyperfine
+These benchmarks compare the speed of Badness's formatter, linter, and language
+server with other LaTeX tools, along with the language server's memory use. The
+tools differ in formatting style, lint coverage, and editor features, so the
+timings alone cannot tell you which tool best suits your work.
 
 ## Formatter
 
-### How the formatter is measured
-
-Each tool is invoked exactly as a user would pipe a document through it:
-
-  | Tool          | Invocation                                              |
-  | ------------- | ------------------------------------------------------- |
-  | `badness`     | `badness format --no-config --stdin-filepath bench.tex` |
-  | `tex-fmt`     | `tex-fmt --stdin`                                       |
-  | `latexindent` | `latexindent -g /dev/null -`                            |
-
-The corpus is real LaTeX: a committed `small.tex` baseline plus larger documents
-(`cv.tex`, `masters_dissertation.tex`, `phd_dissertation.tex`) fetched by
-`benches/documents/download.sh` from a pinned `tex-fmt` release. Documents
-`badness` cannot yet format (parser diagnostics) are skipped, as are comparison
-tools missing from `PATH`.
-
-The whole-project benchmark below measures **recursive folder formatting**
-rather than a single file: each tool walks a real multi-file LaTeX thesis (the
-pinned [`kks32/phd-thesis-template`], its `.tex` fragments) and formats every
-file in read-only `--check` mode—the folder analog of the `stdin -> stdout` runs
-above (full formatting work, nothing written). Only `badness` and `tex-fmt`
-appear there: `latexindent` has no recursive directory mode, so it is excluded
-from that comparison by design.
-
-  | Tool      | Invocation                          |
-  | --------- | ----------------------------------- |
-  | `badness` | `badness format --check <dir>`      |
-  | `tex-fmt` | `tex-fmt --check --recursive <dir>` |
-
-The folder benchmark runs against a throwaway copy of the fetched project so
-both tools walk an identical, un-gitignored, `.tex`-only tree (`badness format`
-is `.tex`-only, while `tex-fmt` would otherwise also touch `.bib`/`.cls`). Any
-file `badness` cannot format yet is dropped from *both* tools, keeping the
-comparison symmetric. This is a different mode from the single-file runs, so
-read its ratio on its own terms, not against them.
-
-[`kks32/phd-thesis-template`]: https://github.com/kks32/phd-thesis-template
-
-### Setup
+We compare `badness` with [`tex-fmt`](https://github.com/wgunderwood/tex-fmt)
+and [`latexindent`](https://github.com/cmhughes/latexindent.pl) on individual
+documents. Files that `badness` cannot format are excluded from every tool's
+results.
 
 {{ benchmark-meta }}
 
@@ -79,15 +20,116 @@ read its ratio on its own terms, not against them.
 
 ### Whole-project results
 
+This comparison measures the time to check formatting across the `.tex` files of
+[`kks32/phd-thesis-template`]. Both tools compute the formatted output without
+writing changes to disk. `latexindent` is omitted because it has no recursive
+directory mode.
+
 {{ benchmark-project-results }}
 
 ## Linter
 
-### How the linter is measured
+We compare `badness lint` with [`lacheck`](https://ctan.org/pkg/lacheck) and
+[`chktex`](https://ctan.org/pkg/chktex) on the same individual documents. Each
+linter checks for a different set of problems. Neither comparison tool has a
+recursive directory mode, so this benchmark covers individual files only.
 
-The linter runs over the same single-file corpus. Linters are read-only, so each
-tool is handed the document path directly (no stdin plumbing—`lacheck` only
-reliably reads a real file):
+{{ lint-benchmark-meta }}
+
+{{ lint-benchmark-results }}
+
+## Language Server
+
+We compare Badness with [TexLab](https://github.com/latex-lsp/texlab) by opening
+the same five documents in the complete thesis project. The benchmark measures
+how long each server takes to start, respond to editor requests, and finish
+background work, as well as how much memory it uses.
+
+{{ memory-benchmark-meta }}
+
+### Speed
+
+The startup measurements cover three waits:
+
+- **Initialize** measures the server's response to the editor's initialization
+  request.
+- **Workspace ready** measures the time from process start until background
+  indexing settles.
+- **Open files ready** measures the time from opening the documents until
+  diagnostics arrive and background work settles.
+
+After startup, we time requests for document symbols, hover information,
+definitions, references, and renaming. The chart shows the median and 95th
+percentile (p95) of these response times. Tooltips and expandable tables include
+the number of results returned, which can differ between servers.
+
+{{ lsp-benchmark-results }}
+
+### Memory
+
+The chart shows median memory use across three fresh sessions, including child
+processes. **RSS** counts resident memory, including shared pages in each
+process. The tooltips also show **PSS**, which divides shared pages among the
+processes using them to estimate their share of physical memory.
+
+{{ memory-benchmark-results }}
+
+## Reproducibility
+
+Run these commands from the repository root:
+
+```sh
+task bench:download  # Fetch the benchmark documents.
+task bench          # Measure formatter and linter speed.
+task bench:lsp      # Measure language-server speed and memory.
+```
+
+The scripts build `badness` in release mode. The formatter and linter comparison
+uses the tools available on `PATH` and skips any that are missing. Install
+[`hyperfine`][hyperfine] and `jq` for timing statistics; without them, the
+script uses a shell loop that reports only mean times. The language-server
+benchmark requires Linux, Python 3, and `texlab`. `task bench:memory` is an
+alias for `task bench:lsp`.
+
+The commands write `benches/benchmark_results.json` and
+`benches/memory_results.json`. These committed files supply the charts, machine
+details, and tool versions shown above. Building the documentation reads these
+files without running the benchmarks. Neither benchmark runs in CI.
+
+### Documents
+
+The individual documents are a committed `small.tex` baseline and three files
+from a pinned `tex-fmt` release: `cv.tex`, `masters_dissertation.tex`, and
+`phd_dissertation.tex`. The thesis project comes from a pinned revision of
+[`kks32/phd-thesis-template`]. `benches/documents/download.sh` records both
+pins.
+
+The formatter and linter benchmarks skip any document that `badness` cannot
+format. For the project comparison, the script copies a fixed set of `.tex`
+files into a temporary directory, excluding unsupported files from both tools.
+This gives both formatters the same input files without interference from Git
+ignore rules. The language servers use the complete project, including its
+class, style, bibliography, and image files.
+
+### Formatter and linter commands
+
+For individual documents, each formatter reads from standard input and writes to
+standard output:
+
+  | Tool          | Invocation                                              |
+  | ------------- | ------------------------------------------------------- |
+  | `badness`     | `badness format --no-config --stdin-filepath bench.tex` |
+  | `tex-fmt`     | `tex-fmt --stdin`                                       |
+  | `latexindent` | `latexindent -g /dev/null -`                            |
+
+The project comparison includes directory traversal and uses check mode:
+
+  | Tool      | Invocation                                 |
+  | --------- | ------------------------------------------ |
+  | `badness` | `badness format --no-config --check <dir>` |
+  | `tex-fmt` | `tex-fmt --check --recursive <dir>`        |
+
+Each linter reads the document from its path:
 
   | Tool      | Invocation                        |
   | --------- | --------------------------------- |
@@ -95,84 +137,38 @@ reliably reads a real file):
   | `chktex`  | `chktex -q <file>`                |
   | `lacheck` | `lacheck <file>`                  |
 
-Findings are the normal case, and the tools signal them differently: `chktex`
-exits `2`, `badness lint` exits `1`, and `lacheck` always exits `0`. A non-zero
-exit here is not a run error, so hyperfine is told to ignore it
-(`--ignore-failure`); the shell-loop fallback does the same.
+With `hyperfine`, each command gets one warmup and at least three measured runs.
+The script ignores exit codes because lint findings and formatting differences
+can produce nonzero exits. The commands and timing loop are defined in
+`benches/compare_format.sh`.
 
-There is no folder analog for the linter comparison: neither `lacheck` nor
-`chktex` has a recursive directory mode, so—like `latexindent` in the formatter
-folder benchmark—they would have no counterpart to measure against.
+### Language-server sessions
 
-### Setup
+`benches/compare_lsp_memory.sh` starts three fresh sessions each of
+`badness lsp` and `texlab run`. In each session, the harness initializes the
+server, waits for background work to settle, opens five documents, and collects
+diagnostics using the server's pull or push model. It then requests document
+symbols and citation or reference hovers and waits for background work to settle
+again.
 
-{{ lint-benchmark-meta }}
+The timed symbol and hover requests cover three chapter files. Definition,
+references, and rename use the `Aup91` citation in `Chapter1/chapter1.tex`,
+whose entry is in `References/references.bib`. References include the
+declaration. Rename computes edits without applying them. Each request target
+gets two warmup rounds and 20 measured rounds per session. The chart aggregates
+these samples across all three sessions. The recorded results also include
+response sizes and counts of symbols, locations, edits, and affected files.
 
-### Results
+The harness samples the server and all descendant processes through Linux
+`/proc` every 150 ms. Background work has settled when CPU use stays below 5% of
+one core for five seconds. A phase fails if it does not settle within 60
+seconds. Workspace and open-file readiness timings end at the start of their
+respective quiet periods.
 
-{{ lint-benchmark-results }}
+Memory is recorded after initialization (**Baseline**) and after the open-file
+workload settles (**Settled**). **Peak** is the largest sample through the timed
+requests. The chart shows the median of each measurement across the three
+sessions, and the JSON file retains the measurements from each session.
 
-## Language-server speed and memory
-
-### How the language servers are measured
-
-The harness starts three fresh processes each of `badness lsp` and `texlab run`
-against the complete, pinned [`kks32/phd-thesis-template`] workspace. Each
-session initializes the server, waits for background work to settle, opens the
-same five documents, obtains diagnostics using the server's advertised pull or
-push model, primes document symbols and meaningful citation/reference hovers,
-and waits for the editor workload to settle. It then times warm document-symbol,
-hover, definition, references, and rename requests.
-
-The readiness measurements divide that session into three user-visible waits:
-
-- **Initialize** is the `initialize` request round trip from a fresh process.
-- **Workspace ready** runs from process start to the beginning of the final
-  quiet window after initialization and background indexing.
-- **Open files ready** runs from the burst of `didOpen` notifications through
-  diagnostics and the beginning of the next quiet window.
-
-Warm document-symbol and hover requests span the same three chapter files,
-selected for real citation or reference keys. Definition, references, and rename
-use the `Aup91` citation in `Chapter1/chapter1.tex`; its definition is in
-`References/references.bib`. References include the declaration, and rename
-constructs a `WorkspaceEdit` without applying it.
-
-Each target gets two unmeasured warmup rounds and 20 measured rounds in every
-fresh session. The request-latency figure shows the median and p95 over all
-samples. Tooltips and expandable data tables also show serialized result size
-and the range of symbols, locations, or edits each server returns, including the
-number of files involved. Those counts expose cases in which two fast responses
-did different amounts of work.
-
-On Linux, the harness samples the complete descendant process tree every 150 ms
-from `/proc`. **RSS** is the resident memory commonly reported by process
-monitors; it counts shared pages once in every process. **PSS** divides shared
-pages among the processes that map them, which better estimates how much
-physical memory the session occupies. The baseline is recorded after
-initialization settles, the settled value after the open-file workload settles,
-and the peak is the largest sample through the timed requests. A phase is
-settled after five seconds below 5% of one CPU core and fails after 60 seconds.
-The memory figure shows median RSS across three fresh runs, with PSS in the
-tooltips; the JSON artifact retains each run's measurements.
-
-The servers do not provide identical features or analysis, so this compares the
-user-visible latency, returned work, and resident cost rather than efficiency at
-the same work. Results also depend on the operating system, allocator, machine,
-and tool versions; read the absolute figures together with the setup below.
-
-Regenerate this section with `task bench:lsp` (`task bench:memory` remains an
-alias). The committed `benches/memory_results.json` artifact is only read while
-building the site—the benchmark never runs in CI or during an mdBook build.
-
-### Setup
-
-{{ memory-benchmark-meta }}
-
-### Speed
-
-{{ lsp-benchmark-results }}
-
-### Memory
-
-{{ memory-benchmark-results }}
+[hyperfine]: https://github.com/sharkdp/hyperfine
+[`kks32/phd-thesis-template`]: https://github.com/kks32/phd-thesis-template
