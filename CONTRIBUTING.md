@@ -168,6 +168,13 @@ upstream sources by `scripts/gen_*.py` and guarded by paired `task …:check` an
 rather than hand-editing the mechanical facts. `signatures.json`, `colors.json`,
 and `tikz_libraries.json` are curated by hand and may be edited directly.
 
+Command entries in `signatures.json` may set `completionKind` to `symbol` for
+argument-free math and text symbols or logos, or `keyword` for argument-free
+control, spacing, and declaration commands. This metadata affects completion
+only. Omit it when the classification is unknown; an empty CWL signature does
+not establish zero arguments. Document definitions and project declarations
+override these classifications.
+
 The published `badness.toml` schema is generated from the Rust configuration
 types. Regenerate `badness.schema.json` with
 `UPDATE_EXPECTED=1 cargo test --test config_schema`, and review the diff rather

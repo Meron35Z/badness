@@ -7148,7 +7148,9 @@ fn build_completion_items(
                 .map(|candidate| {
                     let command = matches!(
                         candidate.kind,
-                        CandidateKind::Command | CandidateKind::SymbolCommand
+                        CandidateKind::Command
+                            | CandidateKind::SymbolCommand
+                            | CandidateKind::KeywordCommand
                     );
                     let mut item = candidate_to_item(candidate, file.as_deref());
                     if command {
@@ -7175,6 +7177,7 @@ fn candidate_to_item(candidate: CompletionCandidate, file: Option<&Path>) -> Com
         CandidateKind::Command => CompletionItemKind::FUNCTION,
         CandidateKind::Variable => CompletionItemKind::VARIABLE,
         CandidateKind::Constant | CandidateKind::SymbolCommand => CompletionItemKind::CONSTANT,
+        CandidateKind::KeywordCommand => CompletionItemKind::KEYWORD,
         CandidateKind::Environment => CompletionItemKind::CLASS,
         CandidateKind::Label => CompletionItemKind::REFERENCE,
         CandidateKind::Package => CompletionItemKind::MODULE,
@@ -7185,12 +7188,12 @@ fn candidate_to_item(candidate: CompletionCandidate, file: Option<&Path>) -> Com
     };
     let data = file.and_then(|file| {
         let payload = match candidate.kind {
-            CandidateKind::Command | CandidateKind::SymbolCommand => {
-                completion_resolve::CompletionResolveData::Command {
-                    name: candidate.label.clone(),
-                    file: file.to_path_buf(),
-                }
-            }
+            CandidateKind::Command
+            | CandidateKind::SymbolCommand
+            | CandidateKind::KeywordCommand => completion_resolve::CompletionResolveData::Command {
+                name: candidate.label.clone(),
+                file: file.to_path_buf(),
+            },
             CandidateKind::Environment => completion_resolve::CompletionResolveData::Environment {
                 name: candidate.label.clone(),
                 file: file.to_path_buf(),

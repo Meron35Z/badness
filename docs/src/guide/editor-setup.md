@@ -35,14 +35,16 @@ built-in data. They display the known brace and bracket argument slots; they do
 not describe every TeX argument protocol. The signature display does not insert
 arguments.
 
-Known standard math symbols, such as `\omega`, `\sum`, and `\leq`, have the
-completion kind `Constant`. Argument-taking commands such as `\vspace` retain
-`Function`. Editors can use this distinction for icons and automatic brackets;
-for example, blink.cmp can insert braces after `\vspace` while leaving `\omega`
-bare. Recognized definitions in the document or loaded local packages, and
-explicit project declarations, override the built-in symbol classification.
-Commands outside this curated symbol set keep their existing completion kinds;
-an empty signature alone does not identify a symbol.
+Known math and text symbols and logos, such as `\omega`, `\hbar`, `\copyright`,
+and `\LaTeX`, have the completion kind `Constant`. Known argument-free control,
+spacing, and declaration commands, such as `\newpage`, `\par`, `\quad`, and
+`\bfseries`, have kind `Keyword`. Argument-taking commands such as `\vspace`
+retain `Function`. Editors can use these distinctions for icons and automatic
+brackets; for example, blink.cmp can insert braces after `\vspace` while leaving
+`\omega` and `\newpage` bare. Recognized definitions in the document or loaded
+local packages, and explicit project declarations, override the built-in
+classification. Commands without a curated classification keep their existing
+completion kinds; an empty signature alone does not establish zero arguments.
 
 ## LaTeX3 completion
 

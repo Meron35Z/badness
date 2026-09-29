@@ -2330,27 +2330,34 @@ fn lsp_completion_signatures_respect_label_details_support() {
         };
         let (client, server_thread) = start_server_with_capabilities(None, capabilities);
         let uri: Uri = "file:///completion-signatures.tex".parse().unwrap();
-        did_open(&client, &uri, 1, "\\sec\n\\vsp\n\\ome\n");
+        did_open(&client, &uri, 1, "\\sec\n\\vsp\n\\ome\n\\LaT\n\\new\n");
         recv_diagnostics(&client);
 
-        for (line, name, signature, slots) in [
-            (0, "section", "\\section[]{}", Some("[]{}")),
-            (1, "vspace", "\\vspace{}", Some("{}")),
-            (2, "omega", "\\omega", None),
+        for (line, name, signature, slots, kind) in [
+            (
+                0,
+                "section",
+                "\\section[]{}",
+                Some("[]{}"),
+                CompletionItemKind::FUNCTION,
+            ),
+            (
+                1,
+                "vspace",
+                "\\vspace{}",
+                Some("{}"),
+                CompletionItemKind::FUNCTION,
+            ),
+            (2, "omega", "\\omega", None, CompletionItemKind::CONSTANT),
+            (3, "LaTeX", "\\LaTeX", None, CompletionItemKind::CONSTANT),
+            (4, "newpage", "\\newpage", None, CompletionItemKind::KEYWORD),
         ] {
             let item = complete(&client, 2, &uri, Position::new(line, 4))
                 .into_iter()
                 .find(|i| i.label == name)
                 .unwrap();
             assert_eq!(item.detail.as_deref(), Some(signature));
-            assert_eq!(
-                item.kind,
-                Some(if name == "omega" {
-                    CompletionItemKind::CONSTANT
-                } else {
-                    CompletionItemKind::FUNCTION
-                }),
-            );
+            assert_eq!(item.kind, Some(kind));
             assert!(item.documentation.is_none());
             if support == Some(true) {
                 assert_eq!(

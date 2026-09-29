@@ -16,6 +16,10 @@
 //! math-ness together, keyed by name. This is the high-precision tier we maintain
 //! by hand.
 //!
+//! Optional `completionKind` metadata is loaded separately from signatures.
+//! Entries containing only completion metadata do not acquire semantic behavior
+//! or reserve names against project declarations.
+//!
 //! `environmentCommands` records complete command signatures local to literal
 //! environment bodies. [`SignatureDb::command_at`] resolves the nearest matching
 //! scope before the global command signature. These facts are separate from
@@ -183,6 +187,16 @@ pub fn match_verbatim_arg_slot(args: &[ArgSpec], slot: &mut usize) -> Option<Arg
         return None;
     }
     None
+}
+
+/// Curated completion presentation, independent of parser and formatter behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandCompletionKind {
+    /// A math or text symbol, or a logo, that consumes no arguments.
+    Symbol,
+    /// An argument-free control, spacing, or declaration command.
+    Keyword,
 }
 
 /// The signature of a control sequence.
@@ -823,12 +837,30 @@ impl<'a> Signatures<'a> {
 /// The bundled, curated signature data (see module docs).
 const SIGNATURES_JSON: &str = include_str!("../../data/signatures.json");
 
-static DB: LazyLock<SignatureDb> =
-    LazyLock::new(|| parse(SIGNATURES_JSON).expect("bundled data/signatures.json must be valid"));
+struct BuiltinData {
+    signatures: SignatureDb,
+    command_completions: HashMap<SmolStr, CommandCompletionKind>,
+}
+
+static DB: LazyLock<BuiltinData> = LazyLock::new(|| {
+    parse_data(SIGNATURES_JSON).expect("bundled data/signatures.json must be valid")
+});
 
 /// The process-wide built-in signature database.
 pub fn builtin() -> &'static SignatureDb {
-    &DB
+    &DB.signatures
+}
+
+/// Curated command presentation. Definitions and declarations take precedence.
+/// An absent classification leaves the usual command kind, even with no recorded
+/// arguments: CWL does not distinguish omitted argument protocols from zero arity.
+pub fn command_completion_kind(name: &str) -> Option<CommandCompletionKind> {
+    DB.command_completions.get(name).copied()
+}
+
+/// Commands with curated completion metadata, including those without signatures.
+pub fn command_completion_names<'a>() -> impl Iterator<Item = &'a str> {
+    DB.command_completions.keys().map(SmolStr::as_str)
 }
 
 /// The type of the build-generated CWL maps: a name-keyed perfect-hash map. The
@@ -1038,6 +1070,8 @@ impl From<RawArg> for ArgSpec {
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawCommand {
+    #[serde(default, rename = "completionKind")]
+    completion_kind: Option<CommandCompletionKind>,
     #[serde(default)]
     args: Vec<RawArg>,
     #[serde(default)]
@@ -1160,9 +1194,24 @@ struct RawDb {
     _expl3_names: Vec<String>,
 }
 
-/// Deserialize the bundled JSON into a [`SignatureDb`].
-fn parse(json: &str) -> serde_json::Result<SignatureDb> {
+/// Deserialize completion metadata separately so it grants no semantic behavior.
+fn parse_data(json: &str) -> serde_json::Result<BuiltinData> {
     let raw: RawDb = serde_json::from_str(json)?;
+    let mut commands = HashMap::new();
+    let mut command_completions = HashMap::new();
+    for (name, raw_sig) in raw.commands {
+        let name = SmolStr::new(name);
+        let completion_kind = raw_sig.completion_kind;
+        let sig = CommandSig::from(raw_sig);
+        if let Some(kind) = completion_kind {
+            command_completions.insert(name.clone(), kind);
+        }
+        // Semantic signatures reserve names in declarations and affect definition
+        // scanning and linting. A completion-only entry must not gain those effects.
+        if completion_kind.is_none() || sig != CommandSig::default() {
+            commands.insert(name, sig);
+        }
+    }
     let mut command_scopes: HashMap<SmolStr, HashMap<SmolStr, CommandSig>> = HashMap::new();
     for (env, commands) in raw.environment_commands {
         for (name, sig) in commands {
@@ -1172,13 +1221,9 @@ fn parse(json: &str) -> serde_json::Result<SignatureDb> {
                 .insert(SmolStr::new(&env), sig.into());
         }
     }
-    Ok(SignatureDb {
+    let signatures = SignatureDb {
         command_scopes,
-        commands: raw
-            .commands
-            .into_iter()
-            .map(|(name, sig)| (SmolStr::new(name), sig.into()))
-            .collect(),
+        commands,
         environments: raw
             .environments
             .into_iter()
@@ -1192,12 +1237,20 @@ fn parse(json: &str) -> serde_json::Result<SignatureDb> {
         // The built-in tier *is* the curated data a declaration copies from, so
         // nothing in it is itself declared.
         declared_environments: std::collections::HashSet::new(),
+    };
+    Ok(BuiltinData {
+        signatures,
+        command_completions,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse(json: &str) -> serde_json::Result<SignatureDb> {
+        parse_data(json).map(|data| data.signatures)
+    }
 
     #[test]
     fn bundled_json_loads() {
@@ -1211,6 +1264,45 @@ mod tests {
         let db = builtin();
         assert_eq!(db.command("frac").map(|c| c.args.len()), Some(2));
         assert!(db.command("frac").unwrap().args.iter().all(|a| a.required));
+    }
+
+    #[test]
+    fn completion_metadata_is_optional_and_does_not_change_signature_behavior() {
+        let data = parse_data(
+            r#"{ "commands": {
+                "symbol": { "completionKind": "symbol" },
+                "keyword": { "completionKind": "keyword" },
+                "block": { "completionKind": "keyword", "block": true },
+                "unknown": {}
+            } }"#,
+        )
+        .unwrap();
+        for (name, kind) in [
+            ("symbol", Some(CommandCompletionKind::Symbol)),
+            ("keyword", Some(CommandCompletionKind::Keyword)),
+            ("unknown", None),
+        ] {
+            assert_eq!(data.command_completions.get(name).copied(), kind);
+            assert_eq!(data.signatures.command(name).is_none(), kind.is_some());
+        }
+        assert!(data.signatures.command("block").unwrap().block);
+        assert_eq!(
+            data.command_completions.get("block"),
+            Some(&CommandCompletionKind::Keyword)
+        );
+        assert!(parse(r#"{ "commands": { "x": { "completionKind": "symobl" } } }"#).is_err());
+    }
+
+    #[test]
+    fn curated_completion_kinds_have_no_recorded_arguments() {
+        for name in command_completion_names() {
+            for sig in [builtin().command(name), cwl().command(name)]
+                .into_iter()
+                .flatten()
+            {
+                assert!(sig.args.is_empty() && !sig.verbatim, "{name}");
+            }
+        }
     }
 
     #[test]

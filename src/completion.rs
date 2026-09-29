@@ -22,14 +22,17 @@ use crate::declarations::ResolvedDeclarations;
 use crate::semantic::SemanticModel;
 use crate::semantic::builder::{cite_command, is_glossary_ref_command, ref_command};
 use crate::semantic::completion::{
-    arg_enum_values, class_names, color_models, color_names, is_symbol_command, package_names,
-    pgf_libraries, tikz_libraries,
+    arg_enum_values, class_names, color_models, color_names, package_names, pgf_libraries,
+    tikz_libraries,
 };
 use crate::semantic::expl3::{
     mode::ModeIndex,
     symbols::{Symbol, SymbolKind},
 };
-use crate::semantic::signature::{SignatureDb, builtin, cwl};
+use crate::semantic::signature::{
+    CommandCompletionKind, SignatureDb, builtin, command_completion_kind, command_completion_names,
+    cwl,
+};
 use crate::syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
 
 /// What the cursor at a given offset is positioned to complete.
@@ -129,6 +132,8 @@ pub enum CandidateKind {
     Command,
     /// A known symbol command, retaining command signatures and documentation.
     SymbolCommand,
+    /// An argument-free control command, retaining signatures and documentation.
+    KeywordCommand,
     Variable,
     Constant,
     Environment,
@@ -611,6 +616,7 @@ fn command_candidates(
     let mut names = union_names(
         builtin()
             .command_names()
+            .chain(command_completion_names())
             .chain(user_sigs.command_names())
             .chain(declared.command_names())
             .chain(cwl().command_names()),
@@ -652,13 +658,13 @@ fn command_candidates(
         .into_iter()
         .map(|label| CompletionCandidate {
             kind: kinds.get(label.as_str()).copied().unwrap_or_else(|| {
-                if is_symbol_command(&label)
-                    && user_sigs.command(&label).is_none()
-                    && declared.command_like(&label).is_none()
-                {
-                    CandidateKind::SymbolCommand
-                } else {
-                    CandidateKind::Command
+                if user_sigs.command(&label).is_some() || declared.command_like(&label).is_some() {
+                    return CandidateKind::Command;
+                }
+                match command_completion_kind(&label) {
+                    Some(CommandCompletionKind::Symbol) => CandidateKind::SymbolCommand,
+                    Some(CommandCompletionKind::Keyword) => CandidateKind::KeywordCommand,
+                    None => CandidateKind::Command,
                 }
             }),
             label,
@@ -841,15 +847,14 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_command_alias_overrides_symbol_classification() {
-        let declarations = declared("[commands.omega]\nlike = 'ref'\n");
-        let candidates =
-            command_candidates(&SignatureDb::default(), &declarations, "ome", false, &[]);
-        let omega = candidates
-            .iter()
-            .find(|item| item.label == "omega")
-            .unwrap();
-        assert_eq!(omega.kind, CandidateKind::Command);
+    fn a_declared_command_alias_overrides_completion_classification() {
+        for name in ["omega", "LaTeX", "newpage", "quad"] {
+            let declarations = declared(&format!("[commands.{name}]\nlike = 'ref'\n"));
+            let candidates =
+                command_candidates(&SignatureDb::default(), &declarations, name, false, &[]);
+            let item = candidates.iter().find(|item| item.label == name).unwrap();
+            assert_eq!(item.kind, CandidateKind::Command, "{name}");
+        }
     }
 
     #[test]

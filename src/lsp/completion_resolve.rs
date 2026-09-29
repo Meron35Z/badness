@@ -388,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn symbol_completion_kinds_are_conservative_and_keep_resolve_data() {
+    fn curated_completion_kinds_keep_signatures_and_resolve_data() {
         let path = Path::new("/p/main.tex");
         let mut db = IncrementalDatabase::default();
         for (name, kind) in [
@@ -400,12 +400,24 @@ mod tests {
             ("leq", CompletionItemKind::CONSTANT),
             ("rightarrow", CompletionItemKind::CONSTANT),
             ("langle", CompletionItemKind::CONSTANT),
+            ("hbar", CompletionItemKind::CONSTANT),
+            ("longrightarrow", CompletionItemKind::CONSTANT),
+            ("TeX", CompletionItemKind::CONSTANT),
+            ("LaTeX", CompletionItemKind::CONSTANT),
+            ("copyright", CompletionItemKind::CONSTANT),
+            ("newpage", CompletionItemKind::KEYWORD),
+            ("par", CompletionItemKind::KEYWORD),
+            ("quad", CompletionItemKind::KEYWORD),
+            ("qquad", CompletionItemKind::KEYWORD),
+            ("bfseries", CompletionItemKind::KEYWORD),
             ("vspace", CompletionItemKind::FUNCTION),
             ("sqrt", CompletionItemKind::FUNCTION),
             ("mathord", CompletionItemKind::FUNCTION),
             ("verb", CompletionItemKind::FUNCTION),
             ("item", CompletionItemKind::FUNCTION),
             ("def", CompletionItemKind::FUNCTION),
+            ("kern", CompletionItemKind::FUNCTION),
+            ("hskip", CompletionItemKind::FUNCTION),
         ] {
             let src = format!("\\{name}");
             let file = db.upsert_file(path, src.clone());
@@ -428,25 +440,37 @@ mod tests {
     }
 
     #[test]
-    fn symbol_completion_yields_to_document_and_package_definitions() {
+    fn curated_completion_yields_to_document_and_package_definitions() {
         let path = Path::new("/p/main.tex");
-        for definition in [
-            "\\renewcommand{\\omega}[1]{#1}",
-            "\\renewcommand{\\omega}{x}",
-            "\\renewcommand{\\omega}[1][x]{#1}",
-            "\\def\\omega#1{#1}",
-            "\\RenewDocumentCommand{\\omega}{m}{#1}",
+        for (name, definition) in [
+            ("omega", "\\renewcommand{\\omega}[1]{#1}"),
+            ("omega", "\\renewcommand{\\omega}{x}"),
+            ("omega", "\\renewcommand{\\omega}[1][x]{#1}"),
+            ("omega", "\\def\\omega#1{#1}"),
+            ("omega", "\\RenewDocumentCommand{\\omega}{m}{#1}"),
+            ("LaTeX", "\\renewcommand{\\LaTeX}[1]{#1}"),
+            ("newpage", "\\renewcommand{\\newpage}[1]{#1}"),
+            ("quad", "\\renewcommand{\\quad}{x}"),
+            (
+                "omega",
+                "\\makeatletter\\def\\omega{\\@dblarg\\helper}\\makeatother",
+            ),
+            (
+                "newpage",
+                "\\makeatletter\\renewcommand{\\newpage}{\\@dblarg\\helper}\\makeatother",
+            ),
         ] {
             let mut db = IncrementalDatabase::default();
-            let src = format!("{definition}\n\\ome");
+            let prefix = format!("\\{}", &name[..3]);
+            let src = format!("{definition}\n{prefix}");
             for cached in [false, true] {
                 if cached {
                     let file = db.upsert_file(path, src.clone());
                     db.reparse_stage_edits(file, None);
                 }
-                let item = complete(&db, path, &src, "\\ome")
+                let item = complete(&db, path, &src, &prefix)
                     .into_iter()
-                    .find(|i| i.label == "omega")
+                    .find(|i| i.label == name)
                     .unwrap();
                 assert_eq!(
                     item.kind,
@@ -457,12 +481,12 @@ mod tests {
 
             let file = db.upsert_file(Path::new("/p/mypkg.sty"), definition.to_string());
             db.reparse_stage_edits(file, None);
-            let src = "\\usepackage{mypkg}\n\\ome";
-            let file = db.upsert_file(path, src.to_string());
+            let src = format!("\\usepackage{{mypkg}}\n{prefix}");
+            let file = db.upsert_file(path, src.clone());
             db.reparse_stage_edits(file, None);
-            let item = complete(&db, path, src, "\\ome")
+            let item = complete(&db, path, &src, &prefix)
                 .into_iter()
-                .find(|i| i.label == "omega")
+                .find(|i| i.label == name)
                 .unwrap();
             assert_eq!(
                 item.kind,
