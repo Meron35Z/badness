@@ -240,7 +240,9 @@ Semantic lookup can depend on the enclosing environment.
 and has no sectioning role. The linter, outline, and label context share this
 interpretation, including in question files without a class declaration.
 Environment headers and closers retain their surrounding meaning. These local
-entries do not change parser grouping or formatter layout.
+entries do not change parser grouping. The formatter resolves the same local
+signatures through `Signatures::command_at`, with scanned definitions taking
+precedence over the curated database.
 
 Facts that authorize a rewrite need stronger evidence than facts used for
 completion. `ContentKind::Keyval` permits breaks after commas that had no
@@ -817,6 +819,19 @@ that inherit them can supply the claim. The nearest environment determines the
 body policy, so an `itemize` nested inside a node label retains its own layout.
 `statementBody` remains separate from `code`, which identifies `.dtx` macrocode
 and its lexer regime.
+
+Algorithm2e uses a separate `algorithm2e` environment flag and argument content
+kind. Its formatter reads direct `\;` control-symbol tokens as statement
+terminators, keeping nested arguments and math intact. Curated control-flow
+arguments form indented blocks, and ordinary text spacing normalizes within each
+statement. This does not add parser nodes or change argument attachment.
+Environment-local signatures keep shared names such as `\For` out of unrelated
+prose; their complete braced argument shapes must match before the algorithm2e
+meaning applies. The typeset check in `tests/typeset/algorithm2e.tex` covers
+glued statement boundaries and nested control flow. A candidate environment also
+needs a complete control-flow call in its direct body before top-level `\;`
+tokens become terminators. Without that proof, an `algorithm` float can belong
+to the separate algorithm package, where `\;` retains its spacing meaning.
 
 ### Reflow is safe by construction
 

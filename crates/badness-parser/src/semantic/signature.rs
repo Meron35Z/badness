@@ -82,6 +82,9 @@ pub enum ContentKind {
     /// Running prose the formatter may reflow to the line width (e.g. a
     /// `\footnote`/`\caption` body, a sectioning title).
     Prose,
+    /// An algorithm2e statement body: text with `\;` line terminators and
+    /// nested control-flow commands. Only curated signatures grant this layout.
+    Algorithm2e,
     /// A comma-separated token list whose interior whitespace is *insignificant*,
     /// so the formatter may collapse a multi-line authored form to a single line
     /// (a `\citep`/`\cite` key list). Unlike [`Prose`](ContentKind::Prose), the
@@ -333,6 +336,10 @@ pub struct EnvironmentSig {
     /// layout for the whole body *and* asserts the whitespace claim above, so
     /// hold it to the standard of the `math` routing flag.
     pub statement_body: bool,
+    /// A candidate algorithm2e body. The formatter requires a complete
+    /// control-flow shape before assigning statement meaning to text-mode `\;`,
+    /// since the algorithm package shares the float name. Never directs parsing.
+    pub algorithm2e: bool,
     /// `true` when a top-level `label` entry in the environment's first optional
     /// argument creates a LaTeX label definition. This is narrower than
     /// [`ContentKind::Keyval`]: many key-value processors have a `label` key whose
@@ -458,6 +465,7 @@ pub(crate) const fn environment(generated: GeneratedEnvironment) -> EnvironmentS
         // Curated-only facet, like the verbatim-argument one: a statement body is
         // package grammar the mechanical tier cannot see.
         statement_body: false,
+        algorithm2e: false,
         // A key named `label` is not enough to prove `\label` semantics, so the
         // mechanical CWL tier can never grant this fact.
         label_key: false,
@@ -555,7 +563,11 @@ impl SignatureDb {
                     && !begin.is_alias()
                     && let Some(sig) = begin.name().and_then(|env| scopes.get(env.as_str()))
                 {
-                    return Some(sig);
+                    return if algorithm2e_shape_matches(command, sig) {
+                        Some(sig)
+                    } else {
+                        self.command(&name)
+                    };
                 }
                 child = parent;
             }
@@ -772,6 +784,15 @@ impl<'a> Signatures<'a> {
             .or_else(|| cwl().command(name))
     }
 
+    /// Resolve environment-local signatures while retaining scanned-definition
+    /// precedence and the arity-only CWL fallback.
+    pub fn command_at(&self, command: &SyntaxNode) -> Option<&'a CommandSig> {
+        self.user
+            .command_at(command)
+            .or_else(|| builtin().command_at(command))
+            .or_else(|| crate::ast::command_name(command).and_then(|name| cwl().command(&name)))
+    }
+
     /// The signature of environment `name`: scanned, then built-in, then CWL. See
     /// [`command`] for why the CWL tier is safe to consult here.
     ///
@@ -832,6 +853,36 @@ impl<'a> Signatures<'a> {
         }
         self.environment(&name)
     }
+}
+
+/// `\For` and `\If` also name algorithmicx commands with different arities.
+/// Admit the algorithm2e meaning only for a complete braced invocation, so all
+/// consumers, including the missing-argument linter, share the same proof.
+fn algorithm2e_shape_matches(command: &SyntaxNode, sig: &CommandSig) -> bool {
+    use crate::syntax::{SyntaxElement, is_trivia};
+
+    if !sig
+        .args
+        .iter()
+        .any(|arg| arg.content == ContentKind::Algorithm2e)
+    {
+        return true;
+    }
+    let mut slot = 0;
+    for element in command.children_with_tokens() {
+        match element {
+            SyntaxElement::Node(child) if child.kind() == SyntaxKind::GROUP => {
+                if match_arg_slot(&sig.args, &mut slot, ArgKind::Brace).is_none() {
+                    return false;
+                }
+            }
+            SyntaxElement::Node(child) if child.kind() == SyntaxKind::DOC_COMMENT => {}
+            SyntaxElement::Token(token)
+                if token.kind() == SyntaxKind::CONTROL_WORD || is_trivia(token.kind()) => {}
+            _ => return false,
+        }
+    }
+    sig.args[slot..].iter().all(|arg| !arg.required)
 }
 
 /// The bundled, curated signature data (see module docs).
@@ -962,13 +1013,14 @@ impl RawArgKind {
 }
 
 /// An argument's content kind as written in the JSON: `"opaque"` (default),
-/// `"prose"`, `"tokenList"`, or `"keyval"`. Mirrors [`ContentKind`].
+/// `"prose"`, `"algorithm2e"`, `"tokenList"`, or `"keyval"`. Mirrors [`ContentKind`].
 #[derive(Deserialize, Clone, Copy, Default)]
 #[serde(rename_all = "camelCase")]
 enum RawContentKind {
     #[default]
     Opaque,
     Prose,
+    Algorithm2e,
     TokenList,
     Keyval,
 }
@@ -1015,6 +1067,7 @@ impl From<RawContentKind> for ContentKind {
         match raw {
             RawContentKind::Opaque => ContentKind::Opaque,
             RawContentKind::Prose => ContentKind::Prose,
+            RawContentKind::Algorithm2e => ContentKind::Algorithm2e,
             RawContentKind::TokenList => ContentKind::TokenList,
             RawContentKind::Keyval => ContentKind::Keyval,
         }
@@ -1140,6 +1193,8 @@ struct RawEnvironment {
     code: bool,
     #[serde(default, rename = "statementBody")]
     statement_body: bool,
+    #[serde(default)]
+    algorithm2e: bool,
     #[serde(default, rename = "labelKey")]
     label_key: bool,
     #[serde(default, rename = "captionContainer")]
@@ -1165,6 +1220,7 @@ impl From<RawEnvironment> for EnvironmentSig {
             math: raw.math,
             code: raw.code,
             statement_body: raw.statement_body,
+            algorithm2e: raw.algorithm2e,
             label_key: raw.label_key,
             caption_container: raw.caption_container,
             align: raw.align,
@@ -1365,6 +1421,25 @@ mod tests {
             .descendants()
             .filter(|node| node.kind() == SyntaxKind::COMMAND)
             .collect()
+    }
+
+    #[test]
+    fn algorithm2e_scopes_require_complete_shapes_and_yield_to_definitions() {
+        for env in ["algorithm", "algorithm*", "algorithm2e", "algorithm2e*"] {
+            let src = format!(
+                "\\For{{outside}}{{body}}\n\\begin{{{env}}}\n\\For{{condition}}{{body}}\n\\For{{one argument}}\n\\end{{{env}}}\n"
+            );
+            let commands = commands_in(&src);
+            assert!(builtin().command_at(&commands[0]).is_none());
+            let sig = builtin().command_at(&commands[1]).unwrap();
+            assert_eq!(sig.args[1].content, ContentKind::Algorithm2e);
+            assert!(builtin().command_at(&commands[2]).is_none());
+
+            let mut scanned = SignatureDb::default();
+            scanned.insert_command("For", CommandSig::default());
+            let signatures = Signatures::new(&scanned);
+            assert!(signatures.command_at(&commands[1]).unwrap().args.is_empty());
+        }
     }
 
     #[test]

@@ -351,6 +351,7 @@ fn format_root(
     // The `.dtx` doc-paragraph reflow-safety memo (see [`DtxReflowCache`]),
     // owned here for the whole lowering like `user` and `regions`.
     let dtx_reflow_cache = DtxReflowCache::default();
+    let algorithm2e_cache = RefCell::new(HashMap::new());
     let cx = LowerCtx {
         wrap: ctx.style().wrap,
         item_indent: ctx.style().item_indent,
@@ -365,6 +366,7 @@ fn format_root(
         profile,
         range,
         dtx_reflow_cache: &dtx_reflow_cache,
+        algorithm2e_cache: &algorithm2e_cache,
         dtx_margin_probe: false,
         preserve_dtx_nested_layout: false,
         in_dtx_doc_region: false,
@@ -786,6 +788,9 @@ struct LowerCtx<'a> {
     /// the memo a nested document pays for it repeatedly. Borrowed from
     /// [`format_root`] like `expl3_regions`.
     dtx_reflow_cache: &'a DtxReflowCache,
+    /// Cache the control-flow proof for each candidate algorithm environment;
+    /// every paragraph and managed command can ask for the same body policy.
+    algorithm2e_cache: &'a RefCell<HashMap<SyntaxNode, bool>>,
     /// Set while *probing* whether a `.dtx` doc paragraph reflows safely. The probe
     /// lowers the paragraph, and that lowering must not consult
     /// [`margin_floats_into_paragraph`] again — the two would recurse into each
@@ -1111,7 +1116,9 @@ fn lower_node(node: &SyntaxNode, cx: LowerCtx<'_>) -> Ir {
         {
             return lower_dtx_doc_paragraph(node, cx);
         }
-        SyntaxKind::PARAGRAPH if cx.wraps_prose() => {
+        SyntaxKind::PARAGRAPH
+            if cx.wraps_prose() || in_algorithm2e_env(node, cx) && !is_dtx_doc_paragraph(node) =>
+        {
             return lower_paragraph_reflow(node, cx);
         }
         // Under `Preserve` a (non-`.dtx`) prose paragraph keeps its authored line
@@ -1239,7 +1246,8 @@ fn lower_node(node: &SyntaxNode, cx: LowerCtx<'_>) -> Ir {
         // stream keeps the authored margins verbatim.
         SyntaxKind::COMMAND
             if (command_has_math_arg(node, cx)
-                || cx.wraps_prose() && command_has_managed_arg(node, cx))
+                || (cx.wraps_prose() || in_algorithm2e_env(node, cx))
+                    && command_has_managed_arg(node, cx))
                 && !contains_doc_margin(node, cx) =>
         {
             return lower_command(node, cx);
@@ -1350,7 +1358,9 @@ fn lower_paragraph_reflow(node: &SyntaxNode, cx: LowerCtx<'_>) -> Ir {
 /// `\begin`-tail splice in [`lower_env_body`], so a header the greedy parser
 /// over-attached lays out under the same rule as the body it is spliced into.
 fn paragraph_reflow_kind(node: &SyntaxNode, cx: LowerCtx<'_>) -> ReflowKind {
-    if in_statement_body_env(node, cx) {
+    if in_algorithm2e_env(node, cx) {
+        ReflowKind::Algorithm2e
+    } else if in_statement_body_env(node, cx) {
         ReflowKind::Statement
     } else {
         ReflowKind::Prose
@@ -1798,6 +1808,9 @@ enum ReflowKind {
     /// not the propagated bit, so inside a width-owned argument the rule must
     /// not fire at all.
     ProseArg,
+    /// Text statements separated by algorithm2e's text-mode `\;`. Argument and
+    /// math nodes remain nested, so their semicolons cannot terminate this run.
+    Algorithm2e,
     /// Code-like statements (a `\newcommand` definition body, a picture body's
     /// fallback content): a lone newline ends the line, so each source line stays
     /// its own logical line; only width forces a wrap. Flush continuation keeps
@@ -2272,7 +2285,13 @@ fn reflow_elements_checked(
     let glue_matched_args = !cx.in_dtx_doc_region
         && !run_carries_doc_margin(&elements, cx)
         && matches!(kind, ReflowKind::Prose | ReflowKind::ProseArg);
-    let elements: Vec<SyntaxElement> = flatten_inline_prose(elements, cx, glue_matched_args);
+    // Algorithm terminators belong to this body's direct stream. Flattening a
+    // text argument would promote its private `\;` into a statement boundary.
+    let elements: Vec<SyntaxElement> = if kind == ReflowKind::Algorithm2e {
+        elements
+    } else {
+        flatten_inline_prose(elements, cx, glue_matched_args)
+    };
 
     // Inside one structural statement, gaps consult the TikZ unit model: a
     // unit-internal gap renders as a single space instead of a break
@@ -2288,6 +2307,7 @@ fn reflow_elements_checked(
     // Sentence/semantic segmentation applies to *prose* runs; a `Statement` run is
     // code (a `\newcommand` body), so it keeps the width fill regardless of mode.
     let render = match cx.wrap {
+        _ if kind == ReflowKind::Algorithm2e => RunRender::Fill,
         WrapMode::Stable if kind != ReflowKind::Statement => RunRender::Stable {
             target: cx.stable_target,
         },
@@ -2394,11 +2414,12 @@ fn reflow_elements_checked(
                     // forced breaks pass 2 can see and pass 1 could not (see
                     // [`ReflowKind`]).
                     let residue_applies =
-                        !matches!(kind, ReflowKind::ProseArg | ReflowKind::StatementInterior);
+                        !matches!(kind, ReflowKind::ProseArg | ReflowKind::StatementInterior | ReflowKind::Algorithm2e);
                     let prev_is_command = residue_applies && line_has_content && line_all_commands;
                     let next_is_command =
                         residue_applies && line_is_command_only(&elements, idx, cx);
                     if kind == ReflowKind::Statement
+                        || cx.wrap == WrapMode::Preserve
                         || cx.wrap == WrapMode::Semantic
                         || prev_is_command
                         || next_is_command
@@ -2437,6 +2458,23 @@ fn reflow_elements_checked(
                     }
                 }
                 continue;
+            }
+            SyntaxElement::Token(token)
+                if kind == ReflowKind::Algorithm2e
+                    && token.kind() == SyntaxKind::CONTROL_SYMBOL
+                    && token.text() == "\\;" =>
+            {
+                if after_block && !after_block_closed {
+                    b.append_to_last_line(ride_after_block(lower_loose_token(token, cx), after_block_gap));
+                } else {
+                    b.push_atom_piece(lower_loose_token(token, cx), token.text());
+                }
+                b.end_line();
+                line_all_commands = true;
+                line_has_content = false;
+                // Keep a trailing comment on the terminated statement's line.
+                prev_was_block = true;
+                prev_block_closes_line = true;
             }
             // A comment trailing content rides the end of that line, then forces a
             // break. But a comment that *begins* its own physical line stays on its
@@ -2667,12 +2705,18 @@ fn reflow_elements_checked(
                     && label_follows_sectioning_run(&elements, idx, cx);
                 let section_label_closes_line =
                     is_section_label && next_is_separated(&elements, idx);
+                // Algorithm control-flow blocks end a TeX paragraph themselves,
+                // so a following statement can start a line even when glued.
+                let algorithm_block = kind == ReflowKind::Algorithm2e
+                    && cx.signatures.command_at(child).is_some_and(|sig| {
+                        sig.args.iter().any(|arg| arg.content == ContentKind::Algorithm2e)
+                    });
                 let is_block_stmt = kind != ReflowKind::Statement
                     && child.kind() == SyntaxKind::COMMAND
                     && (is_sectioning
                         || (command_is_block(child, cx)
                             && b.atom.is_empty()
-                            && next_is_separated(&elements, idx)));
+                            && (next_is_separated(&elements, idx) || algorithm_block)));
                 if is_section_label && !ir.contains_forced_break() {
                     let glued_to_previous_label = idx > 0
                         && matches!(
@@ -5618,6 +5662,41 @@ fn in_statement_body_env(node: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
         .is_some_and(|sig| sig.statement_body)
 }
 
+fn in_algorithm2e_env(node: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
+    let Some(env) = node
+        .ancestors()
+        .skip(1)
+        .find(|ancestor| ancestor.kind() == SyntaxKind::ENVIRONMENT)
+        .filter(|env| {
+            cx.signatures
+                .environment_at(env)
+                .is_some_and(|sig| sig.algorithm2e)
+        })
+    else {
+        return false;
+    };
+    if let Some(&proved) = cx.algorithm2e_cache.borrow().get(&env) {
+        return proved;
+    }
+    // The algorithm package uses the same float name, but keeps `\;` as text
+    // spacing. A complete algorithm2e control-flow call in the direct body
+    // establishes the dialect; calls inside other environments or definitions
+    // cannot grant that meaning to the enclosing float.
+    let proved = env
+        .children()
+        .filter(|child| child.kind() == SyntaxKind::PARAGRAPH)
+        .flat_map(|paragraph| paragraph.children())
+        .any(|command| {
+            cx.signatures.command_at(&command).is_some_and(|sig| {
+                sig.args
+                    .iter()
+                    .any(|arg| arg.content == ContentKind::Algorithm2e)
+            })
+        });
+    cx.algorithm2e_cache.borrow_mut().insert(env, proved);
+    proved
+}
+
 /// A `\begin{…}` header, split from the content the greedy parser attached past
 /// the end of that header. See [`lower_begin`].
 struct BeginParts {
@@ -7229,9 +7308,7 @@ pub fn is_paren_trim_word(token: &SyntaxToken) -> bool {
 
 /// Whether `node` (a `COMMAND`) is a horizontal-rule command per the signature DB.
 fn is_rule_command(node: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(node)
-        .and_then(|name| cx.signatures.command(&name))
-        .is_some_and(|sig| sig.rule)
+    cx.signatures.command_at(node).is_some_and(|sig| sig.rule)
 }
 
 /// Whether the accumulated cell holds only collapsible trivia (no real content) —
@@ -7392,8 +7469,9 @@ fn rule_overattaches_cell(node: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
     }
     // A leading `{…}` is a real argument only when the signature's first slot is a
     // mandatory brace argument (`\cline{2-3}`, `\specialrule{…}`).
-    let first_slot_is_brace = command_name(node)
-        .and_then(|name| cx.signatures.command(&name))
+    let first_slot_is_brace = cx
+        .signatures
+        .command_at(node)
         .and_then(|sig| sig.args.first())
         .is_some_and(|arg| arg.kind == ArgKind::Brace);
     !first_slot_is_brace
@@ -8485,23 +8563,19 @@ fn is_segment_separator(ir: &Ir) -> bool {
 /// [`lower_command`] path in [`lower_node`]: a command with no such argument (the
 /// overwhelming common case) lowers generically, so nothing regresses.
 fn command_has_managed_arg(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
-        .is_some_and(|sig| {
-            sig.args
-                .iter()
-                .any(|spec| spec.content != ContentKind::Opaque)
-        })
+    cx.signatures.command_at(command).is_some_and(|sig| {
+        sig.args
+            .iter()
+            .any(|spec| spec.content != ContentKind::Opaque)
+    })
 }
 
 fn command_has_math_arg(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
-        .is_some_and(|sig| {
-            sig.args
-                .iter()
-                .any(|spec| spec.domain == ArgumentDomain::Math)
-        })
+    cx.signatures.command_at(command).is_some_and(|sig| {
+        sig.args
+            .iter()
+            .any(|spec| spec.domain == ArgumentDomain::Math)
+    })
 }
 
 /// Whether `command` is an *inline* prose command — one whose prose argument sits
@@ -8515,15 +8589,13 @@ fn command_has_math_arg(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
 /// block-level prose commands that head their own line (`\section`, `\caption`)
 /// leave it unset and keep the block treatment.
 fn command_is_inline_prose(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
-        .is_some_and(|sig| {
-            sig.inline
-                && sig
-                    .args
-                    .iter()
-                    .any(|spec| spec.content == ContentKind::Prose)
-        })
+    cx.signatures.command_at(command).is_some_and(|sig| {
+        sig.inline
+            && sig
+                .args
+                .iter()
+                .any(|spec| spec.content == ContentKind::Prose)
+    })
 }
 
 /// Whether `command` is an *inline* command that sits in running text (`\citep`,
@@ -8533,8 +8605,8 @@ fn command_is_inline_prose(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
 /// command-only line (see [`line_is_command_only`]). Broader than
 /// [`command_is_inline_prose`], which additionally requires a prose argument.
 fn command_is_inline(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
+    cx.signatures
+        .command_at(command)
         .is_some_and(|sig| sig.inline)
 }
 
@@ -8543,17 +8615,15 @@ fn command_is_inline(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
 /// citations from other inline commands such as `\ref` or `\emph`; a local
 /// redefinition shadows the built-in signature and therefore withdraws the role.
 fn command_citation_placement(command: &SyntaxNode, cx: LowerCtx<'_>) -> Option<CitationPlacement> {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
-        .and_then(|sig| {
-            (sig.inline
-                && sig
-                    .args
-                    .iter()
-                    .any(|spec| spec.content == ContentKind::TokenList))
-            .then_some(sig.citation)
-            .flatten()
-        })
+    cx.signatures.command_at(command).and_then(|sig| {
+        (sig.inline
+            && sig
+                .args
+                .iter()
+                .any(|spec| spec.content == ContentKind::TokenList))
+        .then_some(sig.citation)
+        .flatten()
+    })
 }
 
 /// Whether `command` is a *sectioning* command (`\part` … `\subparagraph`), per the
@@ -8566,8 +8636,8 @@ fn command_citation_placement(command: &SyntaxNode, cx: LowerCtx<'_>) -> Option<
 /// #2): sectioning level is exactly the kind of meaning the signature DB owns, and
 /// `\section` is only a heading because the DB says so.
 fn command_is_sectioning(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
+    cx.signatures
+        .command_at(command)
         .is_some_and(|sig| sig.sectioning.is_some())
 }
 
@@ -8601,12 +8671,10 @@ fn command_is_label(command: &SyntaxNode) -> bool {
 /// (`pgfcomp-version-0-65.sty`). A bare head falls to the residual rule, whose
 /// authored-break preservation *is* the fixed point of that stranding.
 fn command_is_block(command: &SyntaxNode, cx: LowerCtx<'_>) -> bool {
-    command_name(command)
-        .and_then(|name| cx.signatures.command(&name))
-        .is_some_and(|sig| {
-            sig.block
-                && (sig.args.iter().all(|arg| !arg.required) || command.children().next().is_some())
-        })
+    cx.signatures.command_at(command).is_some_and(|sig| {
+        sig.block
+            && (sig.args.iter().all(|arg| !arg.required) || command.children().next().is_some())
+    })
 }
 
 /// Lower one `STATEMENT` node (a `;`-terminated statement in a curated
@@ -8829,7 +8897,7 @@ fn expand_inline_prose(
     glue_matched_args: bool,
     out: &mut Vec<SyntaxElement>,
 ) {
-    let Some(sig) = command_name(node).and_then(|name| cx.signatures.command(&name)) else {
+    let Some(sig) = cx.signatures.command_at(node) else {
         out.push(SyntaxElement::Node(node.clone()));
         return;
     };
@@ -8954,7 +9022,7 @@ fn is_collapsible_trivia_element(element: &SyntaxElement) -> bool {
 /// top-level comma split or the body carries a preserved predicate that forbids
 /// segmentation.
 fn inline_token_list_atoms(node: &SyntaxNode, cx: LowerCtx<'_>) -> Option<Vec<Ir>> {
-    let sig = command_name(node).and_then(|name| cx.signatures.command(&name))?;
+    let sig = cx.signatures.command_at(node)?;
     let mut slot = 0usize;
     let mut found = false;
     let mut atoms: Vec<Vec<Ir>> = vec![Vec::new()];
@@ -9041,7 +9109,7 @@ fn lower_command_with_math_spacing(
     cx: LowerCtx<'_>,
     math_spacing: MathSpacing,
 ) -> Ir {
-    let Some(sig) = command_name(node).and_then(|name| cx.signatures.command(&name)) else {
+    let Some(sig) = cx.signatures.command_at(node) else {
         // Defensive: the guard already proved a prose signature exists.
         return Ir::concat(lower_element_stream(node.children_with_tokens(), cx));
     };
@@ -9081,6 +9149,15 @@ fn lower_command_with_math_spacing(
                     continue;
                 }
                 match spec.map(|s| s.content) {
+                    Some(ContentKind::Algorithm2e) => {
+                        out.push(lower_prose_group_kind(
+                            &child,
+                            open,
+                            close,
+                            cx,
+                            ReflowKind::Algorithm2e,
+                        ));
+                    }
                     Some(ContentKind::Prose) if sig.inline => {
                         out.push(lower_inline_prose_group(&child, open, close, cx));
                     }
@@ -9176,6 +9253,16 @@ fn lower_prose_group(
     close: SyntaxKind,
     cx: LowerCtx<'_>,
 ) -> Ir {
+    lower_prose_group_kind(node, open, close, cx, ReflowKind::ProseArg)
+}
+
+fn lower_prose_group_kind(
+    node: &SyntaxNode,
+    open: SyntaxKind,
+    close: SyntaxKind,
+    cx: LowerCtx<'_>,
+    kind: ReflowKind,
+) -> Ir {
     let mut open_ir = Ir::Nil;
     let mut close_ir = Ir::Nil;
     let mut body_elements: Vec<SyntaxElement> = Vec::new();
@@ -9205,7 +9292,7 @@ fn lower_prose_group(
     };
     let has_trailing_comment = body_ends_with_comment(node, close);
 
-    let body = reflow_elements(body_elements.into_iter(), cx, ReflowKind::ProseArg);
+    let body = reflow_elements(body_elements.into_iter(), cx, kind);
     if matches!(body, Ir::Nil) {
         if has_leading_comment {
             // `\caption{%\n}`: the comment already rode the open delimiter, so
@@ -9215,11 +9302,12 @@ fn lower_prose_group(
             Ir::concat([open_ir, close_ir])
         }
     } else {
-        let brk: fn() -> Ir = if has_leading_comment || has_trailing_comment {
-            Ir::hard_line
-        } else {
-            Ir::soft_line
-        };
+        let brk: fn() -> Ir =
+            if has_leading_comment || has_trailing_comment || kind == ReflowKind::Algorithm2e {
+                Ir::hard_line
+            } else {
+                Ir::soft_line
+            };
         Ir::group(Ir::concat([
             open_ir,
             Ir::indent(Ir::concat([brk(), body])),

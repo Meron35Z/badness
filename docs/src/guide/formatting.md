@@ -37,6 +37,18 @@ they do not fit. Opaque braced environment arguments keep values such as
 comments retain their binding; the formatter does not insert `%` markers to
 create new break opportunities.
 
+Inside `algorithm` and `algorithm2e` environments (including their starred
+forms), badness normalizes text in `\KwIn`, `\KwOut`, `\KwData`, and
+`\KwResult`. It indents the braced bodies of `\For`, `\ForEach`, `\ForAll`,
+`\While`, `\If`, `\ElseIf`, `\Else`, `\eIf`, and `\Repeat`, placing each
+statement ending in `\;` on its own source line. Math spacing commands remain
+inside their formulas, and trailing comments stay attached to their statements.
+Control-flow commands need their complete braced arguments to receive this
+layout; custom commands and forms with parenthesized side comments use the
+ordinary fallback. Top-level `\;` statements require a recognized control-flow
+call in the environment's direct body, since the separate `algorithm` package
+uses the same float name and can use `\;` for ordinary spacing.
+
 ## Turning the formatter off
 
 Sometimes a block is laid out by hand and should stay that way---a `tikzpicture`

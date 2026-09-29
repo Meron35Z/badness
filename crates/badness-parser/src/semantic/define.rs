@@ -989,6 +989,7 @@ fn environment_sig(args: Vec<ArgSpec>) -> EnvironmentSig {
         // Statement-sequence layout is a curated fact about a package's own
         // grammar (a TikZ `;`), invisible in a `\newenvironment` body.
         statement_body: false,
+        algorithm2e: false,
         // A source definition exposes no package-specific `label` key semantics.
         label_key: false,
         // A source definition does not prove that labels belong to a `\captionof`.

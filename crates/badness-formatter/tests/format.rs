@@ -511,6 +511,7 @@ const FIXTURES: &[(&str, WrapMode, usize)] = &[
     ("protected_comment_trailing_space", WrapMode::Preserve, 80),
     ("protected_verbatim", WrapMode::Preserve, 80),
     ("preserve_prose_spacing", WrapMode::Preserve, 80),
+    ("issue_193_algorithm_spacing", WrapMode::Sentence, 80),
     ("final_newline_added", WrapMode::Preserve, 80),
     // Environment indentation.
     ("environment_indents_body", WrapMode::Preserve, 80),
@@ -2075,6 +2076,140 @@ fn formatter_fixtures_match_expected() {
             ..FormatStyle::default()
         };
         assert_fixture(name, style);
+    }
+}
+
+#[test]
+fn algorithm_float_does_not_grant_semicolon_statement_meaning() {
+    let input = "\\begin{algorithm}\nA\\;B\n\\end{algorithm}\n";
+    for wrap in [WrapMode::Reflow, WrapMode::Sentence, WrapMode::Preserve] {
+        let style = FormatStyle {
+            wrap,
+            ..FormatStyle::default()
+        };
+        assert_eq!(
+            format_with_style(input, style).unwrap(),
+            "\\begin{algorithm}\n  A\\;B\n\\end{algorithm}\n"
+        );
+    }
+}
+
+#[test]
+fn algorithm2e_spacing_and_statement_boundaries() {
+    for wrap in [
+        WrapMode::Sentence,
+        WrapMode::Reflow,
+        WrapMode::Stable,
+        WrapMode::Semantic,
+        WrapMode::Preserve,
+    ] {
+        assert_fixture(
+            "issue_193_algorithm_spacing",
+            FormatStyle {
+                wrap,
+                math_wrap: MathWrap::Preserve,
+                ..FormatStyle::default()
+            },
+        );
+    }
+}
+
+#[test]
+fn algorithm2e_nested_statements_and_comments() {
+    let input = concat!(
+        "\\begin{algorithm}\n",
+        "\\KwIn{Some   input}\n",
+        "First   step\\;Second   step\\; % trailing\n",
+        "\\For{each   item}{\\If{test   passes}{Use   $a\\;b$\\;% glued\n",
+        "% own line\n",
+        "Keep   \\verb|a   b|\\;}Next   step\\;}\n",
+        "\\end{algorithm}\n",
+    );
+    let expected = concat!(
+        "\\begin{algorithm}\n",
+        "  \\KwIn{Some input}\n",
+        "  First step\\;\n",
+        "  Second step\\; % trailing\n",
+        "  \\For{each item}{\n",
+        "    \\If{test passes}{\n",
+        "      Use $a\\;b$\\;% glued\n",
+        "      % own line\n",
+        "      Keep \\verb|a   b|\\;\n",
+        "    }\n",
+        "    Next step\\;\n",
+        "  }\n",
+        "\\end{algorithm}\n",
+    );
+    for wrap in [
+        WrapMode::Reflow,
+        WrapMode::Sentence,
+        WrapMode::Stable,
+        WrapMode::Semantic,
+        WrapMode::Preserve,
+    ] {
+        let style = FormatStyle {
+            wrap,
+            ..FormatStyle::default()
+        };
+        assert_eq!(
+            format_with_style(input, style).unwrap(),
+            expected,
+            "{wrap:?}"
+        );
+        assert_format_invariants_with_style(input, style);
+    }
+}
+
+#[test]
+fn algorithm2e_signatures_require_scope_and_complete_arguments() {
+    for wrap in [WrapMode::Reflow, WrapMode::Sentence, WrapMode::Preserve] {
+        let style = FormatStyle {
+            wrap,
+            ..FormatStyle::default()
+        };
+        for input in [
+            "\\KwIn{Some   input}\n\\For{each   item}{body   text}\n",
+            "\\begin{algorithm}\n\\For{one   argument}\n\\end{algorithm}\n",
+            "\\begin{algorithm}\n\\For[option]{each   item}{body   text}\n\\end{algorithm}\n",
+            "\\begin{algorithm}\n\\For(note){each   item}{body   text}\n\\end{algorithm}\n",
+            "\\begin{algorithm}\n\\For{each   item}{body   text}{extra}\n\\end{algorithm}\n",
+            "\\newcommand{\\For}[2]{#1 #2}\n\\begin{algorithm}\n\\For{each   item}{body   text}\n\\end{algorithm}\n",
+        ] {
+            let output = format_with_style(input, style).unwrap();
+            assert!(
+                output.contains("   "),
+                "unsupported shape was assigned prose: {output}"
+            );
+            assert_format_invariants_with_style(input, style);
+        }
+    }
+}
+
+#[test]
+fn algorithm2e_groups_keep_private_semicolons_and_comment_edges() {
+    for input in [
+        "\\begin{algorithm}\n\\For{condition}{\\textbf{one\\; two}\\;\\unknown{three\\;four}\\;}\n\\end{algorithm}\n",
+        "\\begin{algorithm}\n\\For{condition}{% opening\nFirst   step\\;% closing\n}\n\\end{algorithm}\n",
+        "\\begin{algorithm}\n\\For{condition}{% empty\n}\n\\end{algorithm}\n",
+        "\\begin{algorithm}\n\\eIf{condition}{first   step\\;}{second   step\\;}\n\\end{algorithm}\n",
+        "\\begin{algorithm}\n\\For{condition}{}\n\\end{algorithm}\n",
+    ] {
+        for wrap in [
+            WrapMode::Reflow,
+            WrapMode::Sentence,
+            WrapMode::Stable,
+            WrapMode::Semantic,
+            WrapMode::Preserve,
+        ] {
+            for line_width in [30, 80] {
+                let style = FormatStyle {
+                    wrap,
+                    line_width,
+                    ..FormatStyle::default()
+                };
+                assert_format_invariants_with_style(input, style);
+            }
+        }
     }
 }
 

@@ -387,6 +387,66 @@
   },
 
   "environmentCommands": {
+    "algorithm": {
+      "KwIn": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwOut": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwData": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwResult": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "For": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForEach": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForAll": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "While": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "If": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ElseIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Repeat": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Else": { "args": [{ "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "eIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true }
+    },
+    "algorithm*": {
+      "KwIn": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwOut": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwData": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwResult": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "For": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForEach": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForAll": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "While": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "If": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ElseIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Repeat": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Else": { "args": [{ "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "eIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true }
+    },
+    "algorithm2e": {
+      "KwIn": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwOut": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwData": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwResult": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "For": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForEach": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForAll": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "While": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "If": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ElseIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Repeat": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Else": { "args": [{ "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "eIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true }
+    },
+    "algorithm2e*": {
+      "KwIn": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwOut": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwData": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "KwResult": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }], "block": true },
+      "For": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForEach": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ForAll": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "While": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "If": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "ElseIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Repeat": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "Else": { "args": [{ "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true },
+      "eIf": { "args": [{ "kind": "req", "content": "prose", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }, { "kind": "req", "content": "algorithm2e", "domain": "text" }], "block": true }
+    },
     "parts": {
       "part": { "args": ["opt"] }
     }
@@ -394,6 +454,10 @@
 
   "environments": {
     "document": { "noIndent": true },
+    "algorithm": { "algorithm2e": true, "block": true },
+    "algorithm*": { "algorithm2e": true, "block": true },
+    "algorithm2e": { "algorithm2e": true, "block": true },
+    "algorithm2e*": { "algorithm2e": true, "block": true },
     "appendix": { "noIndent": true },
 
     "itemize": { "list": true },

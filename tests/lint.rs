@@ -1162,6 +1162,16 @@ fn missing_required_argument_flags_truncated_invocation() {
 }
 
 #[test]
+fn missing_required_argument_accepts_algorithmicx_for() {
+    let input = "\\begin{algorithm}\n\\begin{algorithmic}\n\\For{each item}\n\n\\State process item\n\\EndFor\n\\end{algorithmic}\n\\end{algorithm}\n";
+    assert!(
+        lint(input)
+            .iter()
+            .all(|(rule, _)| *rule != "missing-required-argument")
+    );
+}
+
+#[test]
 fn missing_required_argument_accepts_exam_question_parts() {
     let src = r"\documentclass{exam}
 \begin{document}
