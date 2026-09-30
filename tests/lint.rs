@@ -907,6 +907,34 @@ fn unreferenced_label_sees_a_cross_file_reference() {
 }
 
 #[test]
+fn unreferenced_label_accepts_consecutive_equation_range() {
+    let findings = lint_project(&[(
+        "main.tex",
+        "\\documentclass{article}\n\\begin{document}\n\\begin{equation}a=1\\label{A}\\end{equation}\n\\begin{equation}b=2\\label{B}\\end{equation}\n\\begin{equation}c=3\\label{C}\\end{equation}\n\\begin{equation}d=4\\label{D}\\end{equation}\nSee \\eqref{A}--\\eqref{D}.\n\\end{document}\n",
+    )]);
+    assert!(
+        !rules_only(&findings).contains(&"unreferenced-label"),
+        "the range uses B and C: {findings:?}"
+    );
+}
+
+#[test]
+fn unreferenced_label_does_not_infer_a_range_across_a_manual_tag() {
+    let findings = lint_project(&[(
+        "main.tex",
+        "\\documentclass{article}\n\\begin{document}\n\\begin{equation}a=1\\label{A}\\end{equation}\n\\begin{equation}b=2\\tag{99}\\label{B}\\end{equation}\n\\begin{equation}c=3\\label{C}\\end{equation}\nSee \\eqref{A}--\\eqref{C}.\n\\end{document}\n",
+    )]);
+    assert_eq!(
+        rules_only(&findings)
+            .into_iter()
+            .filter(|rule| *rule == "unreferenced-label")
+            .collect::<Vec<_>>(),
+        vec!["unreferenced-label"]
+    );
+    assert!(findings[0].2.contains("B"));
+}
+
+#[test]
 fn unreferenced_label_is_silent_for_a_bare_fragment() {
     // No `\documentclass`: the reference may live in an unanalyzed main document,
     // so the orphan label is not flagged.
