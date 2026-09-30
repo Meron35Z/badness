@@ -138,6 +138,14 @@ Status: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Linter
 
+- [ ] **Extend `unreferenced-label` range inference (issue #195).** The current
+  `\\eqref{A}--\\eqref{D}` handling counts intermediate labels only in adjacent,
+  single-label `equation` environments in one file. Cover numbered rows in
+  `align`/`gather` and ranges whose reference and definitions span included
+  files. Keep the inference conservative around manual tags, skipped numbers,
+  counter changes, and ambiguous source order; preserve explicit-key behavior
+  for definition navigation and rename.
+
 ### Conditional reasoning for duplicate checks
 
 Extend the shared `ConditionalIndex` used by `duplicate-label` and
