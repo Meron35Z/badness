@@ -392,4 +392,52 @@ mod tests {
         assert!(out[0].message.contains("also defined in"));
         assert!(out[1].message.contains("defined more than once"));
     }
+
+    #[test]
+    fn two_documents_sharing_input_do_not_flag_duplicate_label() {
+        let graph = IncludeGraph::build(
+            &[
+                FileFacts {
+                    path: PathBuf::from("paper.tex"),
+                    include_edges: vec![crate::project::IncludeEdgeKey {
+                        kind: crate::project::IncludeKind::Input,
+                        target: crate::project::IncludeTarget::Path(PathBuf::from("macros.tex")),
+                    }],
+                },
+                FileFacts {
+                    path: PathBuf::from("slides.tex"),
+                    include_edges: vec![crate::project::IncludeEdgeKey {
+                        kind: crate::project::IncludeKind::Input,
+                        target: crate::project::IncludeTarget::Path(PathBuf::from("macros.tex")),
+                    }],
+                },
+                FileFacts {
+                    path: PathBuf::from("macros.tex"),
+                    include_edges: Vec::new(),
+                },
+            ],
+            None,
+        );
+        let names = |list: &[&str]| list.iter().map(SmolStr::new).collect::<Vec<_>>();
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("paper.tex"),
+                    names(&["thm:main"]),
+                    Vec::new(),
+                    true,
+                ),
+                (
+                    PathBuf::from("slides.tex"),
+                    names(&["thm:main"]),
+                    Vec::new(),
+                    true,
+                ),
+                (PathBuf::from("macros.tex"), names(&[]), Vec::new(), false),
+            ],
+            &graph,
+        );
+        assert!(cross_findings("\\label{thm:main}\n", "paper.tex", &r).is_empty());
+        assert!(cross_findings("\\label{thm:main}\n", "slides.tex", &r).is_empty());
+    }
 }

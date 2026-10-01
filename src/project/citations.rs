@@ -2,9 +2,9 @@
 //! file's namespace (via its `\bibliography`/`\addbibresource` resources) so a
 //! `\cite{key}` can be checked against the whole bibliography.
 //!
-//! The citation analog of [`crate::project::labels`]. Namespaces are the same
-//! undirected connected components of the include graph, but the "definitions"
-//! are cite keys gathered from the `.bib` files each component's members
+//! The citation analog of [`crate::project::labels`]. Namespaces are document
+//! scopes defined by compilation root reachability over the include graph, with
+//! "definitions" being cite keys gathered from the `.bib` files each scope's members
 //! reference, not `\label`s. [`ResolvedCitations::build`] is the **pure** algorithm
 //! the CLI calls directly.
 //!
@@ -13,10 +13,6 @@
 //! `\cite` key we cannot see might still be defined. `undefined-citation` fires
 //! only in a closed, rooted namespace with no `\nocite{*}` wildcard, mirroring
 //! `undefined-ref`'s gate.
-//!
-//! The union-find here duplicates [`crate::project::labels`]'s (an EXTRACTION
-//! CANDIDATE for a shared component-finder); kept separate for now so the tested
-//! label resolver is untouched.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -58,6 +54,8 @@ pub struct CiteFileFacts {
 /// One citation namespace: an undirected connected component of the include graph.
 #[derive(Debug, Default)]
 struct Component {
+    /// Member files in this document scope, sorted.
+    members: Vec<PathBuf>,
     /// The cite keys available in this namespace (lowercased for case-insensitive
     /// matching, as BibTeX folds key case).
     keys: HashSet<SmolStr>,
@@ -107,78 +105,71 @@ impl ResolvedCitations {
         bib_keys: &HashMap<PathBuf, Vec<SmolStr>>,
         bib_aliases: &HashMap<PathBuf, PathBuf>,
     ) -> Self {
-        let mut paths: Vec<&Path> = files.iter().map(|f| f.path.as_path()).collect();
-        paths.sort_unstable();
-        paths.dedup();
-        let index: HashMap<&Path, usize> = paths.iter().enumerate().map(|(i, p)| (*p, i)).collect();
+        let file_roots: Vec<(&Path, bool)> = files
+            .iter()
+            .map(|f| (f.path.as_path(), f.is_document_root))
+            .collect();
+        let (component_of, member_lists) = graph.document_components(&file_roots);
 
-        // Undirected connectivity over the include graph (same as label namespaces).
-        let mut uf = UnionFind::new(paths.len());
-        for (&path, &i) in &index {
-            for edge in graph.outgoing(path) {
-                if let Some(&j) = index.get(edge.to.as_path()) {
-                    uf.union(i, j);
-                }
-            }
-            for included in graph.included_by(path) {
-                if let Some(&j) = index.get(included.as_path()) {
-                    uf.union(i, j);
-                }
-            }
-        }
-
-        let mut root_to_id: HashMap<usize, usize> = HashMap::new();
-        let mut component_of: HashMap<PathBuf, usize> = HashMap::new();
-        for (i, &path) in paths.iter().enumerate() {
-            let root = uf.find(i);
-            let next = root_to_id.len();
-            let id = *root_to_id.entry(root).or_insert(next);
-            component_of.insert(path.to_path_buf(), id);
-        }
-        let mut components: Vec<Component> = (0..root_to_id.len())
-            .map(|_| Component {
+        let mut components: Vec<Component> = member_lists
+            .into_iter()
+            .map(|members| Component {
+                members,
                 closed: true,
                 ..Component::default()
             })
             .collect();
 
+        // Map path back to its facts.
+        let facts_map: HashMap<&Path, &CiteFileFacts> =
+            files.iter().map(|f| (f.path.as_path(), f)).collect();
+
         // Gather keys, flags, and bib-resource openness per component.
-        for facts in files {
-            let Some(&id) = component_of.get(&facts.path) else {
-                continue;
-            };
-            let comp = &mut components[id];
-            comp.rooted |= facts.is_document_root;
-            comp.wildcard |= facts.nocite_all;
-            for target in &facts.bib_targets {
-                match target {
-                    BibTarget::Dynamic => comp.closed = false,
-                    BibTarget::Path(path) => {
-                        let resolved_path = bib_keys
-                            .contains_key(path)
-                            .then_some(path)
-                            .or_else(|| bib_aliases.get(path));
-                        match resolved_path.and_then(|path| bib_keys.get_key_value(path)) {
-                            Some(keys) => {
-                                let (path, keys) = keys;
-                                comp.keys
-                                    .extend(keys.iter().map(|k| SmolStr::from(k.to_lowercase())));
-                                // Record the analyzed `.bib` so go-to-def can search it.
-                                comp.bib_paths.push(path.clone());
+        for comp in &mut components {
+            for member in &comp.members {
+                if let Some(facts) = facts_map.get(member.as_path()) {
+                    comp.rooted |= facts.is_document_root;
+                    comp.wildcard |= facts.nocite_all;
+                    for target in &facts.bib_targets {
+                        match target {
+                            BibTarget::Dynamic => comp.closed = false,
+                            BibTarget::Path(path) => {
+                                let resolved_path = bib_keys
+                                    .contains_key(path)
+                                    .then_some(path)
+                                    .or_else(|| bib_aliases.get(path));
+                                match resolved_path.and_then(|path| bib_keys.get_key_value(path)) {
+                                    Some(keys) => {
+                                        let (path, keys) = keys;
+                                        comp.keys.extend(
+                                            keys.iter().map(|k| SmolStr::from(k.to_lowercase())),
+                                        );
+                                        // Record the analyzed `.bib` so go-to-def can search it.
+                                        comp.bib_paths.push(path.clone());
+                                    }
+                                    // A `.bib` we never analyzed: the real key set may be larger.
+                                    None => comp.closed = false,
+                                }
                             }
-                            // A `.bib` we never analyzed: the real key set may be larger.
-                            None => comp.closed = false,
                         }
                     }
                 }
             }
         }
 
-        // An unresolved `.tex` include (dynamic or out-of-set) opens its component,
-        // just as it does for labels.
+        // An unresolved `.tex` include (dynamic or out-of-set) opens any component
+        // containing the including file.
+        let mut unresolved_from: HashSet<&Path> = HashSet::new();
         for edge in graph.unresolved() {
-            if let Some(&id) = component_of.get(&edge.from) {
-                components[id].closed = false;
+            unresolved_from.insert(edge.from.as_path());
+        }
+        for comp in &mut components {
+            if comp
+                .members
+                .iter()
+                .any(|m| unresolved_from.contains(m.as_path()))
+            {
+                comp.closed = false;
             }
         }
 
@@ -206,23 +197,22 @@ impl ResolvedCitations {
             .map_or(&[], |&id| self.components[id].bib_paths.as_slice())
     }
 
-    /// All LaTeX member files sharing `file`'s namespace (its connected
-    /// component), sorted; empty when `file` is unknown. `.bib` files are not
+    /// All LaTeX member files sharing `file`'s namespace (its document scope),
+    /// sorted; empty when `file` is unknown. `.bib` files are not
     /// keyed in `component_of`, so this is the `.tex`/`.sty`/`.cls` members only —
     /// the search set for find-references, which scans each for `\cite` use sites.
     /// Parallel to [`labels::ResolvedLabels::namespace_members`](crate::project::labels::ResolvedLabels::namespace_members).
     pub fn namespace_members(&self, file: &Path) -> Vec<&Path> {
-        let Some(&id) = self.component_of.get(file) else {
-            return Vec::new();
-        };
-        let mut members: Vec<&Path> = self
-            .component_of
-            .iter()
-            .filter(|&(_, &cid)| cid == id)
-            .map(|(p, _)| p.as_path())
-            .collect();
-        members.sort_unstable();
-        members
+        self.component_of
+            .get(file)
+            .map(|&id| {
+                self.components[id]
+                    .members
+                    .iter()
+                    .map(|p| p.as_path())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The LaTeX members of every component whose bibliography includes
@@ -231,22 +221,15 @@ impl ResolvedCitations {
     /// several independent documents, so this unions the citers across
     /// components — the search set for find-references invoked on a `.bib` entry.
     pub fn bib_citers(&self, bib_path: &Path) -> Vec<&Path> {
-        let ids: HashSet<usize> = self
-            .components
-            .iter()
-            .enumerate()
-            .filter(|(_, comp)| comp.bib_paths.iter().any(|p| p == bib_path))
-            .map(|(id, _)| id)
-            .collect();
-        let mut members: Vec<&Path> = self
-            .component_of
-            .iter()
-            .filter(|&(_, id)| ids.contains(id))
-            .map(|(p, _)| p.as_path())
-            .collect();
-        members.sort_unstable();
-        members.dedup();
-        members
+        let mut citers: Vec<&Path> = Vec::new();
+        for comp in &self.components {
+            if comp.bib_paths.iter().any(|p| p == bib_path) {
+                citers.extend(comp.members.iter().map(|p| p.as_path()));
+            }
+        }
+        citers.sort_unstable();
+        citers.dedup();
+        citers
     }
 
     /// Whether cite `key` is defined anywhere in `file`'s namespace
@@ -340,42 +323,6 @@ pub fn resolved_citations(db: &dyn IncrementalDb) -> ResolvedCitations {
         .cloned()
         .collect();
     ResolvedCitations::build_with_aliases(&cite_facts, graph, &bib_keys, &bib_aliases)
-}
-
-/// A minimal union-find (disjoint-set) with path halving and union by size. A copy
-/// of [`crate::project::labels`]'s (extraction candidate).
-struct UnionFind {
-    parent: Vec<usize>,
-    size: Vec<usize>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        Self {
-            parent: (0..n).collect(),
-            size: vec![1; n],
-        }
-    }
-
-    fn find(&mut self, mut x: usize) -> usize {
-        while self.parent[x] != x {
-            self.parent[x] = self.parent[self.parent[x]];
-            x = self.parent[x];
-        }
-        x
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let (mut ra, mut rb) = (self.find(a), self.find(b));
-        if ra == rb {
-            return;
-        }
-        if self.size[ra] < self.size[rb] {
-            std::mem::swap(&mut ra, &mut rb);
-        }
-        self.parent[rb] = ra;
-        self.size[ra] += self.size[rb];
-    }
 }
 
 #[cfg(test)]
@@ -631,5 +578,44 @@ mod tests {
             &bib,
         );
         assert!(with_wildcard.has_wildcard_nocite(Path::new("/p/main.tex")));
+    }
+
+    #[test]
+    fn two_roots_sharing_include_do_not_merge_bibliographies() {
+        // Two independent documents (paper & slides) both include macros.tex.
+        // paper uses paper.bib; slides uses slides.bib.
+        // Neither document should see the other's bibliography.
+        let g = graph(&[
+            ("/p/paper.tex", &[(IncludeKind::Input, "/p/macros.tex")]),
+            ("/p/slides.tex", &[(IncludeKind::Input, "/p/macros.tex")]),
+            ("/p/macros.tex", &[]),
+        ]);
+        let mut bib = HashMap::new();
+        bib.insert(PathBuf::from("/p/paper.bib"), keys(&["knuth1984"]));
+        bib.insert(PathBuf::from("/p/slides.bib"), keys(&["lamport1994"]));
+
+        let r = ResolvedCitations::build(
+            &[
+                facts("/p/paper.tex", &["/p/paper.bib"], true),
+                facts("/p/slides.tex", &["/p/slides.bib"], true),
+                facts("/p/macros.tex", &[], false),
+            ],
+            &g,
+            &bib,
+        );
+
+        assert!(r.is_defined(Path::new("/p/paper.tex"), "knuth1984"));
+        assert!(!r.is_defined(Path::new("/p/paper.tex"), "lamport1994"));
+        assert!(r.is_defined(Path::new("/p/slides.tex"), "lamport1994"));
+        assert!(!r.is_defined(Path::new("/p/slides.tex"), "knuth1984"));
+
+        assert_eq!(
+            r.bib_definers(Path::new("/p/paper.tex")),
+            &[PathBuf::from("/p/paper.bib")]
+        );
+        assert_eq!(
+            r.bib_definers(Path::new("/p/slides.tex")),
+            &[PathBuf::from("/p/slides.bib")]
+        );
     }
 }

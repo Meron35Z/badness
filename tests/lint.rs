@@ -781,6 +781,24 @@ fn cross_file_duplicate_label_is_reported_in_both_files() {
 }
 
 #[test]
+fn two_documents_sharing_input_do_not_warn_duplicate_labels() {
+    // Two independent documents (paper & slides) sharing an included file
+    // via \input must not trigger duplicate-label diagnostics for identical labels.
+    let findings = lint_project(&[
+        (
+            "paper.tex",
+            "\\documentclass{article}\n\\input{macros}\n\\label{thm:main}\\ref{thm:main}\n",
+        ),
+        (
+            "slides.tex",
+            "\\documentclass{beamer}\n\\input{macros}\n\\label{thm:main}\\ref{thm:main}\n",
+        ),
+        ("macros.tex", "% shared macros\n"),
+    ]);
+    assert_eq!(rules_only(&findings), Vec::<&str>::new());
+}
+
+#[test]
 fn undefined_ref_fires_in_a_closed_rooted_document() {
     let findings = lint_project(&[(
         "main.tex",

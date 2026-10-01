@@ -493,6 +493,7 @@ fn definition_body(call: &Call, definitions: &[u8]) -> Option<(Group, u8)> {
     let count = if let Some(argument) = call.arguments.iter().find(|a| a.specifier == b'p') {
         let atoms = argument.atoms(definitions)?;
         let mut count = 0;
+        #[allow(clippy::chunks_exact_to_as_chunks)]
         let mut pairs = atoms.chunks_exact(2);
         for pair in &mut pairs {
             count += 1;

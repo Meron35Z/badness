@@ -8,15 +8,13 @@
 //! no salsa); the language server (eventually) uses the query. Both feed the same
 //! data into the linter, so results match.
 //!
-//! **Namespace = undirected connected component of the include graph.** LaTeX
-//! labels share one namespace per *compiled document*, but with no designated
-//! main file ([`crate::project::project_graph`] passes `root: None`) the
-//! root-free approximation is the connected component: a `main` and the chapters
-//! it `\input`s form one namespace, while two unrelated documents in the same
-//! directory stay separate and don't cross-contaminate. **Known limitation:** two
-//! independent documents that share a common include (e.g. a `preamble.tex`) are
-//! merged into one component, so a label defined in both is reported as a
-//! cross-file duplicate even though they never co-compile.
+//! **Namespace = directed document reachability.** LaTeX labels share one namespace
+//! per *compiled document*, rooted at each compilation entry point (`\documentclass`
+//! or `\begin{document}`). A file's namespace consists of all files reachable from
+//! the roots that include it. Multiple independent documents (e.g. a paper and slides,
+//! or different versions of a paper) that share a common include (e.g. `macros.tex` or
+//! `appendix.tex`) remain isolated into their respective document scopes, preventing
+//! spurious cross-document duplicate label warnings.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -87,9 +85,11 @@ pub fn is_document_root(root: &SyntaxNode) -> bool {
     })
 }
 
-/// One label namespace: an undirected connected component of the include graph.
+/// One label namespace: a document scope defined by compilation root reachability.
 #[derive(Debug, Default)]
 struct Component {
+    /// Member files in this document scope, sorted.
+    members: Vec<PathBuf>,
     /// Label name → the files in this component that define it, sorted & deduped.
     defs: HashMap<SmolStr, Vec<PathBuf>>,
     /// Every `\ref`-family key *used* by any file in the component. Membership
@@ -130,65 +130,57 @@ impl ResolvedLabels {
         files: &[(PathBuf, Vec<SmolStr>, Vec<SmolStr>, bool)],
         graph: &IncludeGraph,
     ) -> Self {
-        // Sorted, unique member paths give union-find a deterministic index space.
-        let mut paths: Vec<&Path> = files.iter().map(|(p, _, _, _)| p.as_path()).collect();
-        paths.sort_unstable();
-        paths.dedup();
-        let index: HashMap<&Path, usize> = paths.iter().enumerate().map(|(i, p)| (*p, i)).collect();
+        let file_roots: Vec<(&Path, bool)> = files
+            .iter()
+            .map(|(p, _, _, is_root)| (p.as_path(), *is_root))
+            .collect();
+        let (component_of, member_lists) = graph.document_components(&file_roots);
 
-        // Undirected connectivity: union a file with each include neighbor that is
-        // itself a member (edges in either direction merge the same namespace).
-        let mut uf = UnionFind::new(paths.len());
-        for (&path, &i) in &index {
-            for edge in graph.outgoing(path) {
-                if let Some(&j) = index.get(edge.to.as_path()) {
-                    uf.union(i, j);
-                }
-            }
-            for included in graph.included_by(path) {
-                if let Some(&j) = index.get(included.as_path()) {
-                    uf.union(i, j);
-                }
-            }
-        }
-
-        // Assign compact component ids in first-seen (sorted-path) order.
-        let mut root_to_id: HashMap<usize, usize> = HashMap::new();
-        let mut component_of: HashMap<PathBuf, usize> = HashMap::new();
-        for (i, &path) in paths.iter().enumerate() {
-            let root = uf.find(i);
-            let next = root_to_id.len();
-            let id = *root_to_id.entry(root).or_insert(next);
-            component_of.insert(path.to_path_buf(), id);
-        }
-        let mut components: Vec<Component> = (0..root_to_id.len())
-            .map(|_| Component {
+        let mut components: Vec<Component> = member_lists
+            .into_iter()
+            .map(|members| Component {
+                members,
                 closed: true,
                 ..Component::default()
             })
             .collect();
 
         // Index definitions, references, and the rooted flag per component.
-        for (path, names, refs, is_root) in files {
-            let Some(&id) = component_of.get(path) else {
-                continue;
-            };
-            let comp = &mut components[id];
-            comp.rooted |= *is_root;
-            for name in names {
-                comp.defs
-                    .entry(name.clone())
-                    .or_default()
-                    .push(path.clone());
+        let file_facts: HashMap<&Path, (&[SmolStr], &[SmolStr], bool)> = files
+            .iter()
+            .map(|(p, names, refs, is_root)| {
+                (p.as_path(), (names.as_slice(), refs.as_slice(), *is_root))
+            })
+            .collect();
+
+        for comp in &mut components {
+            for member in &comp.members {
+                if let Some(&(names, refs, is_root)) = file_facts.get(member.as_path()) {
+                    comp.rooted |= is_root;
+                    for name in names {
+                        comp.defs
+                            .entry(name.clone())
+                            .or_default()
+                            .push(member.clone());
+                    }
+                    comp.refs.extend(refs.iter().cloned());
+                }
             }
-            comp.refs.extend(refs.iter().cloned());
         }
 
-        // An unresolved include (dynamic or out-of-set) opens its component: the
-        // real label universe may be larger than what we analyzed.
+        // An unresolved include (dynamic or out-of-set) opens any component whose
+        // visible set contains the including file.
+        let mut unresolved_from: HashSet<&Path> = HashSet::new();
         for edge in graph.unresolved() {
-            if let Some(&id) = component_of.get(&edge.from) {
-                components[id].closed = false;
+            unresolved_from.insert(edge.from.as_path());
+        }
+        for comp in &mut components {
+            if comp
+                .members
+                .iter()
+                .any(|m| unresolved_from.contains(m.as_path()))
+            {
+                comp.closed = false;
             }
         }
 
@@ -234,23 +226,22 @@ impl ResolvedLabels {
             .is_some_and(|&id| self.components[id].refs.contains(name))
     }
 
-    /// All member files sharing `file`'s namespace (its connected component),
+    /// All member files sharing `file`'s namespace (its document scope),
     /// sorted; empty when `file` is unknown. Includes `file` itself. Unlike
     /// [`definers`](Self::definers) (which files *define* a name) this is every
     /// file in the namespace — the search set for find-references, which must scan
     /// each member for `\ref` use sites.
     pub fn namespace_members(&self, file: &Path) -> Vec<&Path> {
-        let Some(&id) = self.component_of.get(file) else {
-            return Vec::new();
-        };
-        let mut members: Vec<&Path> = self
-            .component_of
-            .iter()
-            .filter(|&(_, &cid)| cid == id)
-            .map(|(p, _)| p.as_path())
-            .collect();
-        members.sort_unstable();
-        members
+        self.component_of
+            .get(file)
+            .map(|&id| {
+                self.components[id]
+                    .members
+                    .iter()
+                    .map(|p| p.as_path())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Whether `file`'s namespace is closed — every include resolves to an
@@ -309,41 +300,6 @@ pub fn resolved_labels(db: &dyn IncrementalDb) -> ResolvedLabels {
         .collect();
 
     ResolvedLabels::build(&files, graph)
-}
-
-/// A minimal union-find (disjoint-set) with path halving and union by size.
-struct UnionFind {
-    parent: Vec<usize>,
-    size: Vec<usize>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        Self {
-            parent: (0..n).collect(),
-            size: vec![1; n],
-        }
-    }
-
-    fn find(&mut self, mut x: usize) -> usize {
-        while self.parent[x] != x {
-            self.parent[x] = self.parent[self.parent[x]];
-            x = self.parent[x];
-        }
-        x
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let (mut ra, mut rb) = (self.find(a), self.find(b));
-        if ra == rb {
-            return;
-        }
-        if self.size[ra] < self.size[rb] {
-            std::mem::swap(&mut ra, &mut rb);
-        }
-        self.parent[rb] = ra;
-        self.size[ra] += self.size[rb];
-    }
 }
 
 #[cfg(test)]
@@ -600,5 +556,185 @@ mod tests {
         assert!(r.is_referenced(Path::new("/p/a.tex"), "c"));
         // An unknown file has an empty reference set.
         assert!(!r.is_referenced(Path::new("/p/missing.tex"), "a"));
+    }
+
+    #[test]
+    fn two_roots_sharing_an_include_do_not_share_labels() {
+        // Two independent documents (paper & slides) both include macros.tex.
+        // Both define `\label{thm:main}`. They must remain separate and NOT
+        // report each other as cross-file duplicate definers.
+        let g = graph(&[
+            ("/p/paper.tex", &[(IncludeKind::Input, "/p/macros.tex")]),
+            ("/p/slides.tex", &[(IncludeKind::Input, "/p/macros.tex")]),
+            ("/p/macros.tex", &[]),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/paper.tex"),
+                    names(&["thm:main"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/slides.tex"),
+                    names(&["thm:main"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/macros.tex"),
+                    names(&[]),
+                    names(&[]),
+                    false,
+                ),
+            ],
+            &g,
+        );
+
+        assert_eq!(
+            r.definers(Path::new("/p/paper.tex"), "thm:main"),
+            &[PathBuf::from("/p/paper.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/slides.tex"), "thm:main"),
+            &[PathBuf::from("/p/slides.tex")]
+        );
+        // macros.tex is visible from both roots, so its query sees both.
+        assert_eq!(
+            r.definers(Path::new("/p/macros.tex"), "thm:main"),
+            &[
+                PathBuf::from("/p/paper.tex"),
+                PathBuf::from("/p/slides.tex")
+            ]
+        );
+
+        // Namespace members for each root is only its own reachable tree.
+        assert_eq!(
+            r.namespace_members(Path::new("/p/paper.tex")),
+            &[Path::new("/p/macros.tex"), Path::new("/p/paper.tex")]
+        );
+        assert_eq!(
+            r.namespace_members(Path::new("/p/slides.tex")),
+            &[Path::new("/p/macros.tex"), Path::new("/p/slides.tex")]
+        );
+    }
+
+    #[test]
+    fn shared_include_defining_label_warns_in_both_roots() {
+        // An appendix defining a label is included by two documents.
+        // paper.tex defines a colliding label, slides.tex does not.
+        let g = graph(&[
+            ("/p/paper.tex", &[(IncludeKind::Input, "/p/appendix.tex")]),
+            ("/p/slides.tex", &[(IncludeKind::Input, "/p/appendix.tex")]),
+            ("/p/appendix.tex", &[]),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/paper.tex"),
+                    names(&["thm:dup"]),
+                    names(&[]),
+                    true,
+                ),
+                (PathBuf::from("/p/slides.tex"), names(&[]), names(&[]), true),
+                (
+                    PathBuf::from("/p/appendix.tex"),
+                    names(&["thm:dup", "sec:app"]),
+                    names(&[]),
+                    false,
+                ),
+            ],
+            &g,
+        );
+
+        // In paper.tex, thm:dup collides with appendix.tex.
+        assert_eq!(
+            r.definers(Path::new("/p/paper.tex"), "thm:dup"),
+            &[
+                PathBuf::from("/p/appendix.tex"),
+                PathBuf::from("/p/paper.tex")
+            ]
+        );
+        // In slides.tex, thm:dup is only in appendix.tex (no duplicate for slides).
+        assert_eq!(
+            r.definers(Path::new("/p/slides.tex"), "thm:dup"),
+            &[PathBuf::from("/p/appendix.tex")]
+        );
+        // sec:app is defined in appendix.tex and unique in both.
+        assert_eq!(
+            r.definers(Path::new("/p/paper.tex"), "sec:app"),
+            &[PathBuf::from("/p/appendix.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/slides.tex"), "sec:app"),
+            &[PathBuf::from("/p/appendix.tex")]
+        );
+    }
+
+    #[test]
+    fn rootless_files_sharing_include_split_by_indegree_zero() {
+        // When no file has `\documentclass`, in-degree 0 files act as roots.
+        let g = graph(&[
+            ("/p/ch1.tex", &[(IncludeKind::Input, "/p/defs.tex")]),
+            ("/p/ch2.tex", &[(IncludeKind::Input, "/p/defs.tex")]),
+            ("/p/defs.tex", &[]),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/ch1.tex"),
+                    names(&["label"]),
+                    names(&[]),
+                    false,
+                ),
+                (
+                    PathBuf::from("/p/ch2.tex"),
+                    names(&["label"]),
+                    names(&[]),
+                    false,
+                ),
+                (PathBuf::from("/p/defs.tex"), names(&[]), names(&[]), false),
+            ],
+            &g,
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/ch1.tex"), "label"),
+            &[PathBuf::from("/p/ch1.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/ch2.tex"), "label"),
+            &[PathBuf::from("/p/ch2.tex")]
+        );
+    }
+
+    #[test]
+    fn subfiles_parent_edge_treats_parent_as_root() {
+        let g = graph(&[
+            ("/p/main.tex", &[(IncludeKind::SubFile, "/p/ch1.tex")]),
+            (
+                "/p/ch1.tex",
+                &[(IncludeKind::SubFilesParent, "/p/main.tex")],
+            ),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/main.tex"),
+                    names(&["m"]),
+                    names(&[]),
+                    true,
+                ),
+                (PathBuf::from("/p/ch1.tex"), names(&["c"]), names(&[]), true),
+            ],
+            &g,
+        );
+        // Both files share one document scope rooted at main.tex.
+        assert_eq!(
+            r.namespace_members(Path::new("/p/ch1.tex")),
+            &[Path::new("/p/ch1.tex"), Path::new("/p/main.tex")]
+        );
+        assert!(r.is_defined(Path::new("/p/ch1.tex"), "m"));
+        assert!(r.is_defined(Path::new("/p/main.tex"), "c"));
     }
 }

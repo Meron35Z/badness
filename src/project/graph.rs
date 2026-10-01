@@ -175,6 +175,132 @@ impl IncludeGraph {
     pub fn cycles(&self) -> &[Vec<PathBuf>] {
         &self.cycles
     }
+
+    /// Partition `files` into document components based on directed reachability
+    /// from compilation roots.
+    ///
+    /// Two files share a component if and only if they are visible in the exact
+    /// same document scopes. A file's document scope is the union of all files
+    /// reachable from any compilation root (or in-degree 0 fallback) that reaches it.
+    ///
+    /// Returns `(component_of, component_members)` where `component_of` maps each
+    /// file path to its index into `component_members`.
+    pub fn document_components(
+        &self,
+        files: &[(&Path, bool)],
+    ) -> (HashMap<PathBuf, usize>, Vec<Vec<PathBuf>>) {
+        let members: HashSet<&Path> = files.iter().map(|(p, _)| *p).collect();
+
+        // 1. Identify candidate compilation roots.
+        let mut candidate_roots = Vec::new();
+        for &(path, is_root) in files {
+            let has_subfiles_parent = self
+                .outgoing(path)
+                .iter()
+                .any(|e| e.kind == IncludeKind::SubFilesParent && members.contains(e.to.as_path()));
+            if is_root && !has_subfiles_parent {
+                candidate_roots.push(path);
+            }
+        }
+
+        let mut reached = HashSet::new();
+        let mut root_trees: Vec<HashSet<&Path>> = Vec::new();
+
+        for root in candidate_roots {
+            let tree = self.reachable_from(root, &members);
+            reached.extend(tree.iter().copied());
+            root_trees.push(tree);
+        }
+
+        // 2. Fallbacks for files not reached by explicit roots:
+        // files with no incoming body includes first, then any remaining unreached files.
+        for &(path, _) in files {
+            if !reached.contains(path) && !self.has_incoming_include(path, &members) {
+                let tree = self.reachable_from(path, &members);
+                reached.extend(tree.iter().copied());
+                root_trees.push(tree);
+            }
+        }
+        for &(path, _) in files {
+            if !reached.contains(path) {
+                let tree = self.reachable_from(path, &members);
+                reached.extend(tree.iter().copied());
+                root_trees.push(tree);
+            }
+        }
+
+        // 3. For each file in deterministic (sorted) order, compute its visible set
+        // (the union of all root trees containing it) and assign compact component IDs.
+        let mut sorted_paths: Vec<&Path> = files.iter().map(|(p, _)| *p).collect();
+        sorted_paths.sort_unstable();
+        sorted_paths.dedup();
+
+        let mut vis_to_id: HashMap<Vec<PathBuf>, usize> = HashMap::new();
+        let mut component_of: HashMap<PathBuf, usize> = HashMap::new();
+        let mut components: Vec<Vec<PathBuf>> = Vec::new();
+
+        for &path in &sorted_paths {
+            let mut vis: Vec<PathBuf> = root_trees
+                .iter()
+                .filter(|tree| tree.contains(path))
+                .flat_map(|tree| tree.iter().map(|&p| p.to_path_buf()))
+                .collect();
+            vis.sort_unstable();
+            vis.dedup();
+            if vis.is_empty() {
+                vis.push(path.to_path_buf());
+            }
+
+            let next_id = components.len();
+            let id = *vis_to_id.entry(vis.clone()).or_insert_with(|| {
+                components.push(vis);
+                next_id
+            });
+            component_of.insert(path.to_path_buf(), id);
+        }
+
+        (component_of, components)
+    }
+
+    fn has_incoming_include(&self, path: &Path, members: &HashSet<&Path>) -> bool {
+        self.included_by(path).iter().any(|from| {
+            members.contains(from.as_path())
+                && self
+                    .outgoing(from)
+                    .iter()
+                    .any(|e| e.to.as_path() == path && e.kind != IncludeKind::SubFilesParent)
+        })
+    }
+
+    fn reachable_from<'a>(
+        &'a self,
+        root: &'a Path,
+        members: &HashSet<&'a Path>,
+    ) -> HashSet<&'a Path> {
+        let mut seen = HashSet::new();
+        let mut stack = vec![root];
+        while let Some(path) = stack.pop() {
+            if !seen.insert(path) {
+                continue;
+            }
+            for edge in self.outgoing(path) {
+                if edge.kind != IncludeKind::SubFilesParent && members.contains(edge.to.as_path()) {
+                    stack.push(edge.to.as_path());
+                }
+            }
+            for inc in self.included_by(path) {
+                if members.contains(inc.as_path())
+                    && self
+                        .outgoing(inc)
+                        .iter()
+                        .any(|e| e.kind == IncludeKind::SubFilesParent && e.to.as_path() == path)
+                {
+                    stack.push(inc.as_path());
+                }
+            }
+        }
+        seen
+    }
 }
 
 /// The set of paths reachable from `root` (inclusive) over an adjacency map of
