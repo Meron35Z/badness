@@ -737,4 +737,157 @@ mod tests {
         assert!(r.is_defined(Path::new("/p/ch1.tex"), "m"));
         assert!(r.is_defined(Path::new("/p/main.tex"), "c"));
     }
+
+    #[test]
+    fn three_documents_sharing_input_isolate_namespaces() {
+        // Doc A, Doc B, Doc C all include shared.tex. All three define \label{local}.
+        let g = graph(&[
+            ("/p/doc_a.tex", &[(IncludeKind::Input, "/p/shared.tex")]),
+            ("/p/doc_b.tex", &[(IncludeKind::Input, "/p/shared.tex")]),
+            ("/p/doc_c.tex", &[(IncludeKind::Input, "/p/shared.tex")]),
+            ("/p/shared.tex", &[]),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/doc_a.tex"),
+                    names(&["local"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/doc_b.tex"),
+                    names(&["local"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/doc_c.tex"),
+                    names(&["local"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/shared.tex"),
+                    names(&["common"]),
+                    names(&[]),
+                    false,
+                ),
+            ],
+            &g,
+        );
+
+        // Each document only sees its own definition of `local`.
+        assert_eq!(
+            r.definers(Path::new("/p/doc_a.tex"), "local"),
+            &[PathBuf::from("/p/doc_a.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_b.tex"), "local"),
+            &[PathBuf::from("/p/doc_b.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_c.tex"), "local"),
+            &[PathBuf::from("/p/doc_c.tex")]
+        );
+
+        // All three see `common` from shared.tex.
+        assert_eq!(
+            r.definers(Path::new("/p/doc_a.tex"), "common"),
+            &[PathBuf::from("/p/shared.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_b.tex"), "common"),
+            &[PathBuf::from("/p/shared.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_c.tex"), "common"),
+            &[PathBuf::from("/p/shared.tex")]
+        );
+    }
+
+    #[test]
+    fn overlapping_shared_includes_across_multiple_documents() {
+        // Doc A inputs ab.tex
+        // Doc B inputs ab.tex and bc.tex
+        // Doc C inputs bc.tex
+        let g = graph(&[
+            ("/p/doc_a.tex", &[(IncludeKind::Input, "/p/ab.tex")]),
+            (
+                "/p/doc_b.tex",
+                &[
+                    (IncludeKind::Input, "/p/ab.tex"),
+                    (IncludeKind::Input, "/p/bc.tex"),
+                ],
+            ),
+            ("/p/doc_c.tex", &[(IncludeKind::Input, "/p/bc.tex")]),
+            ("/p/ab.tex", &[]),
+            ("/p/bc.tex", &[]),
+        ]);
+        let r = ResolvedLabels::build(
+            &[
+                (
+                    PathBuf::from("/p/doc_a.tex"),
+                    names(&["same_name"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/doc_b.tex"),
+                    names(&["same_name"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/doc_c.tex"),
+                    names(&["same_name"]),
+                    names(&[]),
+                    true,
+                ),
+                (
+                    PathBuf::from("/p/ab.tex"),
+                    names(&["inner_col"]),
+                    names(&[]),
+                    false,
+                ),
+                (
+                    PathBuf::from("/p/bc.tex"),
+                    names(&["inner_col"]),
+                    names(&[]),
+                    false,
+                ),
+            ],
+            &g,
+        );
+
+        // Neither doc_a, doc_b, nor doc_c sees each other's `same_name`.
+        assert_eq!(
+            r.definers(Path::new("/p/doc_a.tex"), "same_name"),
+            &[PathBuf::from("/p/doc_a.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_b.tex"), "same_name"),
+            &[PathBuf::from("/p/doc_b.tex")]
+        );
+        assert_eq!(
+            r.definers(Path::new("/p/doc_c.tex"), "same_name"),
+            &[PathBuf::from("/p/doc_c.tex")]
+        );
+
+        // In doc_a: only ab.tex is included, so `inner_col` is unique (only ab.tex).
+        assert_eq!(
+            r.definers(Path::new("/p/doc_a.tex"), "inner_col"),
+            &[PathBuf::from("/p/ab.tex")]
+        );
+        // In doc_c: only bc.tex is included, so `inner_col` is unique (only bc.tex).
+        assert_eq!(
+            r.definers(Path::new("/p/doc_c.tex"), "inner_col"),
+            &[PathBuf::from("/p/bc.tex")]
+        );
+        // In doc_b: BOTH ab.tex and bc.tex are included, so `inner_col` collides!
+        assert_eq!(
+            r.definers(Path::new("/p/doc_b.tex"), "inner_col"),
+            &[PathBuf::from("/p/ab.tex"), PathBuf::from("/p/bc.tex")]
+        );
+    }
 }
